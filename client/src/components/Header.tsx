@@ -1,9 +1,10 @@
-import { ShoppingCart, Search } from "lucide-react";
+import { ShoppingCart, Search, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import ThemeToggle from "./ThemeToggle";
 import { Link } from "wouter";
+import { useAuth } from "@/hooks/useAuth";
 
 interface HeaderProps {
   cartCount?: number;
@@ -11,6 +12,8 @@ interface HeaderProps {
 }
 
 export default function Header({ cartCount = 0, showSearch = true }: HeaderProps) {
+  const { user } = useAuth();
+
   return (
     <header className="sticky top-0 z-40 bg-background border-b border-border">
       <div className="max-w-7xl mx-auto px-4">
@@ -55,9 +58,18 @@ export default function Header({ cartCount = 0, showSearch = true }: HeaderProps
                 )}
               </Button>
             </Link>
-            <Button variant="default" size="default" className="hidden md:inline-flex" data-testid="button-login">
-              Sign In
-            </Button>
+            {user ? (
+              <Button
+                variant="ghost"
+                size="default"
+                className="hidden md:inline-flex"
+                onClick={() => window.location.href = "/api/logout"}
+                data-testid="button-logout"
+              >
+                <LogOut className="w-4 h-4 mr-2" />
+                Sign Out
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>
