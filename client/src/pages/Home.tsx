@@ -12,13 +12,16 @@ import dairyIcon from "@assets/generated_images/Dairy_category_icon_08e6529b.png
 import tomatoesImg from "@assets/generated_images/Sample_product_tomatoes_cc18b3ed.png";
 import lettuceImg from "@assets/generated_images/Sample_product_lettuce_e8e9e93a.png";
 import mangoesImg from "@assets/generated_images/Sample_product_mangoes_7f0ae531.png";
-
+import Footer from "@/components/footer";
+import { useLocation } from "wouter";
 export default function Home() {
+  const [location, setLocation] = useLocation();
   const categories = [
     { icon: fruitsIcon, name: "Fruits", count: 24 },
     { icon: vegetablesIcon, name: "Vegetables", count: 32 },
     { icon: grainsIcon, name: "Grains", count: 18 },
     { icon: dairyIcon, name: "Dairy", count: 12 },
+    { icon: dairyIcon, name: "Cereal", count: 120 },
   ];
 
   const featuredProducts = [
@@ -66,16 +69,35 @@ export default function Home() {
       location: "Kiambu, Kenya",
       smallPrice: 300,
       smallUnit: "kg",
+      bulkPrice: null,
+      bulkUnit: "Not available",
+      approved: true,
+    },
+    {
+      id: "5",
+      image: tomatoesImg,
+      name: "Cherry Tomatoes",
+      seller: "Urban Gardens",
+      location: "Kiambu, Kenya",
+      smallPrice: 300,
+      smallUnit: "kg",
+      bulkPrice: 5400,
+      bulkUnit: "30kg crate",
       approved: true,
     },
   ];
+
+  const handleCategoryNavigation = () => {
+    // navigate to /category/:id page
+    setLocation('/category/' + 1);
+  }
 
   return (
     <div className="min-h-screen bg-background pb-20 md:pb-0">
       <Header cartCount={0} />
 
       <section className="relative h-[60vh] md:h-[80vh] overflow-hidden">
-        <div 
+        <div
           className="absolute inset-0 bg-cover bg-center"
           style={{
             backgroundImage: `linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.5)), url(${heroImg})`,
@@ -91,21 +113,21 @@ export default function Home() {
               Fresh Produce from Local Farmers
             </h1>
             <p className="text-lg md:text-xl mb-8 text-white/90">
-              Buy small or bulk quantities directly from verified farmers. 
+              Buy small or bulk quantities directly from verified farmers.
               Fresh, affordable, and delivered to your doorstep.
             </p>
             <div className="flex flex-wrap gap-4">
-              <Button 
-                size="lg" 
+              <Button
+                size="lg"
                 className="bg-white/95 backdrop-blur-md text-foreground hover:bg-white border border-white/50"
                 data-testid="button-browse-products"
               >
                 Browse Products
                 <ArrowRight className="ml-2 w-4 h-4" />
               </Button>
-              <Button 
-                size="lg" 
-                variant="outline" 
+              <Button
+                size="lg"
+                variant="outline"
                 className="bg-white/10 backdrop-blur-md text-white border-white/30 hover:bg-white/20"
                 data-testid="button-sell-produce"
               >
@@ -117,22 +139,22 @@ export default function Home() {
       </section>
 
       <section className="py-12 md:py-16 bg-background">
-        <div className="max-w-7xl mx-auto px-4">
+        <div className="max-w-8xl mx-auto px-4">
           <div className="flex items-center justify-between mb-8">
             <h2 className="font-display font-bold text-2xl md:text-3xl">
               Shop by Category
             </h2>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-3 md:grid-cols-5 gap-4">
             {categories.map((category) => (
-              <CategoryCard key={category.name} {...category} />
+              <CategoryCard key={category.name} {...category} onClick={handleCategoryNavigation} />
             ))}
           </div>
         </div>
       </section>
 
-      <section className="py-12 md:py-16 bg-muted/30">
-        <div className="max-w-7xl mx-auto px-4">
+      <section className="py-6 md:py-10 bg-muted/30">
+        <div className="max-w-8xl mx-auto px-4">
           <div className="flex items-center justify-between mb-8">
             <h2 className="font-display font-bold text-2xl md:text-3xl">
               Featured Products
@@ -142,7 +164,7 @@ export default function Home() {
               <ArrowRight className="ml-2 w-4 h-4" />
             </Button>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
             {featuredProducts.map((product) => (
               <ProductCard key={product.id} {...product} />
             ))}
@@ -150,18 +172,18 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="py-12 md:py-20">
+      <section className="py-6 md:py-10">
         <div className="max-w-6xl mx-auto px-4">
           <div className="bg-primary text-primary-foreground rounded-2xl p-8 md:p-12 text-center">
             <h2 className="font-display font-bold text-2xl md:text-4xl mb-4">
               Are you a farmer?
             </h2>
             <p className="text-lg md:text-xl mb-8 max-w-2xl mx-auto opacity-90">
-              Join thousands of farmers selling directly to buyers. 
+              Join thousands of farmers selling directly to buyers.
               Set your prices, manage your inventory, and grow your business.
             </p>
-            <Button 
-              size="lg" 
+            <Button
+              size="lg"
               className="bg-white text-primary hover:bg-white/90"
               data-testid="button-start-selling"
             >
@@ -171,7 +193,7 @@ export default function Home() {
           </div>
         </div>
       </section>
-
+      <Footer />
       <MobileNav cartCount={0} />
     </div>
   );

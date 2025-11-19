@@ -11,10 +11,7 @@ export default function CategoryCard({ icon, name, count, onClick }: CategoryCar
   return (
     <Card
       className="p-6 flex flex-col items-center justify-center gap-3 hover-elevate active-elevate-2 cursor-pointer transition-all"
-      onClick={() => {
-        onClick?.();
-        console.log(`Navigating to ${name} category`);
-      }}
+      onClick={onClick}
       data-testid={`button-category-${name.toLowerCase()}`}
     >
       <div className="w-16 h-16 rounded-xl bg-primary/10 flex items-center justify-center">
