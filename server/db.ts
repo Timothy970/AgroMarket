@@ -4,11 +4,10 @@ import ws from "ws";
 import * as schema from "@shared/schema";
 
 neonConfig.webSocketConstructor = ws;
-
+//hardcoded db connection string for local development
+const DATABASE_URL = "postgresql://postgres:20n7sunb01@localhost:5432/agromarket";
 if (!process.env.DATABASE_URL) {
-  throw new Error(
-    "DATABASE_URL must be set. Did you forget to provision a database?",
-  );
+  process.env.DATABASE_URL = DATABASE_URL;
 }
 
 export const pool = new Pool({ connectionString: process.env.DATABASE_URL });

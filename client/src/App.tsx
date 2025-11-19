@@ -13,25 +13,28 @@ import AddProduct from "@/pages/AddProduct";
 import AdminDashboard from "@/pages/AdminDashboard";
 import OrderTracking from "@/pages/OrderTracking";
 import NotFound from "@/pages/not-found";
-
+import CategoryProducts from "@/pages/category/[id]";
 function Router() {
-  const { isAuthenticated, isLoading } = useAuth();
+  // const { isAuthenticated, isLoading } = useAuth();
 
   return (
     <Switch>
-      {isLoading || !isAuthenticated ? (
-        <Route path="/" component={Landing} />
-      ) : (
-        <>
-          <Route path="/" component={Home} />
-          <Route path="/product/:id" component={ProductDetail} />
-          <Route path="/cart" component={Cart} />
-          <Route path="/seller" component={SellerDashboard} />
-          <Route path="/seller/add-product" component={AddProduct} />
-          <Route path="/admin" component={AdminDashboard} />
-          <Route path="/orders/:id" component={OrderTracking} />
-        </>
-      )}
+      {/* {isLoading || !isAuthenticated ? ( */}
+      {/* {isLoading ? (
+        <Route path="/" component={Home} />
+      ) : ( */}
+      <>
+        <Route path="/" component={Home} />
+        <Route path="/product/:id" component={ProductDetail} />
+        <Route path="/cart" component={Cart} />
+        <Route path="/seller" component={SellerDashboard} />
+        <Route path="/seller/add-product" component={AddProduct} />
+        <Route path="/admin" component={AdminDashboard} />
+        <Route path="/orders/:id" component={OrderTracking} />
+        {/* path to products of a specific category */}
+        <Route path="/category/:id" component={CategoryProducts} />
+      </>
+      {/* )} */}
       <Route component={NotFound} />
     </Switch>
   );

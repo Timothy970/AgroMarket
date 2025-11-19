@@ -11,13 +11,14 @@ interface ProductCardProps {
   location: string;
   smallPrice: number;
   smallUnit: string;
-  bulkPrice?: number;
+  bulkPrice?: number | null;
   bulkUnit?: string;
   approved: boolean;
-  onAddToCart?: () => void;
+  onAddToCart?: (productId: string) => void;
 }
 
 export default function ProductCard({
+  id,
   image,
   name,
   seller,
@@ -47,7 +48,7 @@ export default function ProductCard({
           </div>
         )}
       </div>
-      
+
       <div className="p-4 space-y-3">
         <div>
           <h3 className="font-semibold text-lg line-clamp-1" data-testid={`text-product-name-${name}`}>
@@ -72,24 +73,30 @@ export default function ProductCard({
             </span>
             <span className="text-sm text-muted-foreground">per {smallUnit}</span>
           </div>
-          
-          {bulkPrice && bulkUnit && (
+
+          {bulkUnit && (
             <div className="flex items-baseline gap-2">
               <span className="text-sm text-muted-foreground">Bulk:</span>
-              <span className="text-base font-semibold text-foreground" data-testid={`text-price-bulk-${name}`}>
-                KES {bulkPrice.toLocaleString()}
-              </span>
-              <span className="text-sm text-muted-foreground">per {bulkUnit}</span>
+              {bulkPrice ? (
+                <>
+                  <span className="text-base font-semibold text-foreground" data-testid={`text-price-bulk-${name}`}>
+                    KES {bulkPrice.toLocaleString()}
+                  </span>
+                  <span className="text-sm text-muted-foreground">per {bulkUnit}</span>
+                </>
+              ) : (
+                <span className="text-sm text-muted-foreground">Not available</span>
+              )}
             </div>
           )}
         </div>
 
-        <Button 
-          className="w-full" 
+        <Button
+          className="w-full"
           size="default"
           onClick={(e) => {
             e.stopPropagation();
-            onAddToCart?.();
+            onAddToCart?.(id);
             console.log(`Added ${name} to cart`);
           }}
           data-testid={`button-add-cart-${name}`}

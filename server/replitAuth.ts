@@ -8,6 +8,18 @@ import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
 
+//hardcoded replit auth env vars for local development
+const REPLIT_DOMAINS = "localtimmy.repl.co,agromarket.timmyrepl.it";
+if (!process.env.REPL_ID) {
+  process.env.REPL_ID = "6b1f5f3e-4f3e-4d3a-8f7e-123456789abc";
+}
+if (!process.env.REPLIT_DOMAINS) {
+  process.env.REPLIT_DOMAINS = REPLIT_DOMAINS;
+}
+
+if (!process.env.REPL_ID) {
+  throw new Error("Environment variable REPL_ID not provided");
+}
 if (!process.env.REPLIT_DOMAINS) {
   throw new Error("Environment variable REPLIT_DOMAINS not provided");
 }
@@ -32,7 +44,9 @@ export function getSession() {
     tableName: "sessions",
   });
   return session({
-    secret: process.env.SESSION_SECRET!,
+    //hardcoded session secret for local development
+    secret: "localdevsessionsecret",
+    //    secret: process.env.SESSION_SECRET!,
     store: sessionStore,
     resave: false,
     saveUninitialized: false,
