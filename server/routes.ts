@@ -1,74 +1,210 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { setupAuth, isAuthenticated } from "./replitAuth";
-import { insertProductSchema, updateProductSchema, insertCartItemSchema, insertOrderSchema } from "@shared/schema";
+import { insertProductSchema, updateProductSchema, insertCartItemSchema, insertOrderSchema, insertCategorySchema } from "@shared/schema";
 import { z } from "zod";
+import jwt from "jsonwebtoken";
+import crypto from "crypto";
 
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+
+function generateAccessToken(user: any) {
+  return jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: "30d" });
+}
+
+function authenticateToken(req: any, res: any, next: any) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (token == null) return res.status(401).json({ message: "Unauthorized or missing token" });
+
+  jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
+    if (err) return res.status(403).json({ message: "Expired or invalid token" });
+    req.user = user;
+    next();
+  });
+}
+ function respondToClient(res: any,data: any , status: number, message: string) {
+  res.status(status).json({ 
+    "message": message,
+    "data":data,
+    "status_code":status
+
+   });
+}
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
-  await setupAuth(app);
 
   // Auth routes
-  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
+  app.post('/api/auth/register', async (req, res) => {
+    const { email } = req.body;
+    if (!email) return respondToClient(res,null,400,"Email is required")
+
+    const existingUser = await storage.getUserByEmail(email);
+    if (existingUser) {
+      return respondToClient(res,null,400,"User already exists")
+    }
+
+    const otp = crypto.randomInt(100000, 999999).toString();
+    await storage.createOtpRequest(email, otp);
+    
+    // In a real application, send this OTP via email
+    console.log(`Registration OTP for ${email}: ${otp}`);
+    
+    respondToClient(res,{ otp },200,"OTP sent")
+  });
+
+  app.post('/api/auth/login', async (req, res) => {
+    const { email } = req.body;
+    if (!email) return respondToClient(res,null,400,"Email is required")
+
+    const user = await storage.getUserByEmail(email);
+    if (!user) {
+      return respondToClient(res,null,404,"User not found")
+    }
+
+    const otp = crypto.randomInt(100000, 999999).toString();
+    await storage.createOtpRequest(email, otp);
+    
+    // In a real application, send this OTP via email
+    console.log(`Login OTP for ${email}: ${otp}`);
+    
+    respondToClient(res,{ otp },200,"OTP sent")
+  });
+
+  app.post('/api/auth/verify', async (req, res) => {
+    console.log("verify otp___",req.body);
+    const { email, otp, role } = req.body;
+    if (!email || !otp) return respondToClient(res,null,400,"Email and OTP are required")
+
+    const isValid = await storage.verifyOtp(email, otp);
+    if (!isValid) return respondToClient(res,null,400,"Invalid or expired OTP")
+
+    let user = (await storage.getUserByEmail(email));
+    if (!user) {
+      // Create new user with specified role (default to buyer if not provided)
+      user = await storage.createUser({ 
+        email,
+        role: role || "buyer" 
+      });
+    }
+
+    const token = generateAccessToken(user);
+    respondToClient(res,{ token, user },200,"Login successful")
+  });
+
+  app.get('/api/auth/user', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const user = await storage.getUser(userId);
-      res.json(user);
+      respondToClient(res,user,200,"User fetched successfully")
     } catch (error) {
       console.error("Error fetching user:", error);
-      res.status(500).json({ message: "Failed to fetch user" });
+      respondToClient(res,null,500,"Failed to fetch user")
     }
   });
 
+  //add admin users 
+  app 
+
   // User routes - allow buyers to upgrade to seller only
-  app.patch('/api/user/role', isAuthenticated, async (req: any, res) => {
+  app.patch('/api/user/role', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const { role } = req.body;
       
       // Get current user
       const currentUser = await storage.getUser(userId);
       if (!currentUser) {
-        return res.status(404).json({ message: "User not found" });
+        return respondToClient(res,null,404,"User not found")
       }
       
       // Only allow buyer -> seller upgrade for self
       // Admin role can only be set via direct database access
       if (role === "seller" && currentUser.role === "buyer") {
         const user = await storage.updateUserRole(userId, role);
-        return res.json(user);
+        return respondToClient(res,user,200,"User role updated successfully")
       }
       
-      return res.status(403).json({ message: "Role change not permitted" });
+      return respondToClient(res,null,403,"Role change not permitted")
     } catch (error) {
       console.error("Error updating user role:", error);
-      res.status(500).json({ message: "Failed to update role" });
+      respondToClient(res,null,500,"Failed to update role")
     }
   });
 
-  app.patch('/api/user/payout', isAuthenticated, async (req: any, res) => {
+  app.patch('/api/user/payout', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const data = req.body;
       
       const user = await storage.updateUserPayoutMethod(userId, data);
-      res.json(user);
+      respondToClient(res,user,200,"Payout method updated successfully")
     } catch (error) {
       console.error("Error updating payout method:", error);
-      res.status(500).json({ message: "Failed to update payout method" });
+      respondToClient(res,null,500,"Failed to update payout method")
+    }
+  });
+
+    // Categories routes
+  app.post('/api/categories', authenticateToken, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      console.log("User from token:", req.user);
+      // Only sellers can create products
+      const user = await storage.getUser(userId);
+      console.log("User creating category:", user);
+      if (user?.role !== "admin") {
+        return respondToClient(res,null,403,"Admin role required to create categories")
+      }
+      console.log("Creating category with data:", req.body);
+      const categoryData = insertCategorySchema.parse({
+        ...req.body,
+        createdBy: userId,
+      });
+      
+      const category = await storage.createCategory(categoryData);
+      respondToClient(res,category,200,"Category created successfully")
+    } catch (error: any) {
+      console.error("Error creating product:", error);
+      if (error instanceof z.ZodError) {
+        return respondToClient(res,error.errors,400, "Validation error")
+      }
+      respondToClient(res,null,500,"Failed to create product")
+    }
+  });
+
+  app.get('/api/categories', async (req, res) => {
+    try {
+      const categories = await storage.getCategories();
+      respondToClient(res,categories,200,"Categories fetched successfully")
+    } catch (error) {
+      console.error("Error fetching categories:", error);
+      respondToClient(res,null,500,"Failed to fetch categories")
+    }
+  });
+
+  //category products
+  app.get('/api/categories/:id/products', async (req, res) => {
+    try {
+      const categoryId = req.params.id;
+      const products = await storage.getProducts({ category: categoryId });
+      respondToClient(res,products,200,"Category products fetched successfully")
+    } catch (error) {
+      console.error("Error fetching category products:", error);
+      respondToClient(res,null,500,"Failed to fetch category products")
     }
   });
 
   // Product routes
-  app.post('/api/products', isAuthenticated, async (req: any, res) => {
+  app.post('/api/products', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       
-      // Only sellers can create products
+      // Only sellers and admins can create products
       const user = await storage.getUser(userId);
       if (user?.role !== "seller" && user?.role !== "admin") {
-        return res.status(403).json({ message: "Seller role required to create products" });
+        return respondToClient(res,null,403,"Seller or Admin role required to create products")
       }
       
       const productData = insertProductSchema.parse({
@@ -77,13 +213,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       const product = await storage.createProduct(productData);
-      res.json(product);
+      respondToClient(res,product,200,"Product created successfully")
     } catch (error: any) {
       console.error("Error creating product:", error);
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Validation error", errors: error.errors });
+        return respondToClient(res,error.errors,400, "Validation error")
       }
-      res.status(500).json({ message: "Failed to create product" });
+      respondToClient(res,null,500,"Failed to create product")
     }
   });
 
@@ -95,10 +231,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sellerId: sellerId as string,
         category: category as string,
       });
-      res.json(products);
+      respondToClient(res,products,200,"Products fetched successfully")
     } catch (error) {
       console.error("Error fetching products:", error);
-      res.status(500).json({ message: "Failed to fetch products" });
+      respondToClient(res,null,500,"Failed to fetch products")
     }
   });
 
@@ -106,215 +242,215 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const product = await storage.getProduct(req.params.id);
       if (!product) {
-        return res.status(404).json({ message: "Product not found" });
+        return respondToClient(res,null,404,"Product not found")
       }
-      res.json(product);
+      respondToClient(res,product,200,"Product fetched successfully")
     } catch (error) {
       console.error("Error fetching product:", error);
-      res.status(500).json({ message: "Failed to fetch product" });
+      respondToClient(res,null,500,"Failed to fetch product")
     }
   });
 
-  app.patch('/api/products/:id', isAuthenticated, async (req: any, res) => {
+  app.patch('/api/products/:id', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const user = await storage.getUser(userId);
       const product = await storage.getProduct(req.params.id);
       
       if (!product) {
-        return res.status(404).json({ message: "Product not found" });
+        return respondToClient(res,null,404,"Product not found")
       }
       
       // Only the seller who owns the product or admin can update
       if (product.sellerId !== userId && user?.role !== "admin") {
-        return res.status(403).json({ message: "Not authorized to update this product" });
+        return respondToClient(res,null,403,"Not authorized to update this product")
       }
       
       const updates = updateProductSchema.parse(req.body);
       const updatedProduct = await storage.updateProduct(req.params.id, updates);
-      res.json(updatedProduct);
+      respondToClient(res,updatedProduct,200,"Product updated successfully")
     } catch (error: any) {
       console.error("Error updating product:", error);
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Validation error", errors: error.errors });
+        return respondToClient(res,error.errors,400,"Validation error")
       }
-      res.status(500).json({ message: "Failed to update product" });
+      respondToClient(res,null,500,"Failed to update product")
     }
   });
 
-  app.delete('/api/products/:id', isAuthenticated, async (req: any, res) => {
+  app.delete('/api/products/:id', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const user = await storage.getUser(userId);
       const product = await storage.getProduct(req.params.id);
       
       if (!product) {
-        return res.status(404).json({ message: "Product not found" });
+        return respondToClient(res,null,404,"Product not found")
       }
       
       // Only the seller who owns the product or admin can delete
       if (product.sellerId !== userId && user?.role !== "admin") {
-        return res.status(403).json({ message: "Not authorized to delete this product" });
+        return respondToClient(res,null,403,"Not authorized to delete this product")
       }
       
       await storage.deleteProduct(req.params.id);
-      res.json({ message: "Product deleted successfully" });
+      respondToClient(res,null,200,"Product deleted successfully")
     } catch (error) {
       console.error("Error deleting product:", error);
-      res.status(500).json({ message: "Failed to delete product" });
+      respondToClient(res,null,500,"Failed to delete product")
     }
   });
 
   // Admin product approval routes
-  app.post('/api/admin/products/:id/approve', isAuthenticated, async (req: any, res) => {
+  app.post('/api/admin/products/:id/approve', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const user = await storage.getUser(userId);
       
       if (user?.role !== "admin") {
-        return res.status(403).json({ message: "Admin access required" });
+        return respondToClient(res,null,403,"Admin access required")
       }
       
       const product = await storage.approveProduct(req.params.id, userId);
-      res.json(product);
+      respondToClient(res,product,200,"Product approved successfully")
     } catch (error) {
       console.error("Error approving product:", error);
-      res.status(500).json({ message: "Failed to approve product" });
+      respondToClient(res,null,500,"Failed to approve product")
     }
   });
 
-  app.post('/api/admin/products/:id/reject', isAuthenticated, async (req: any, res) => {
+  app.post('/api/admin/products/:id/reject', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const user = await storage.getUser(userId);
       
       if (user?.role !== "admin") {
-        return res.status(403).json({ message: "Admin access required" });
+        return respondToClient(res,null,403,"Admin access required")
       }
       
       const { reason } = req.body;
       if (!reason) {
-        return res.status(400).json({ message: "Rejection reason is required" });
+        return respondToClient(res,null,400,"Rejection reason is required")
       }
       
       const product = await storage.rejectProduct(req.params.id, reason);
-      res.json(product);
+      respondToClient(res,product,200,"Product rejected successfully")
     } catch (error) {
       console.error("Error rejecting product:", error);
-      res.status(500).json({ message: "Failed to reject product" });
+      respondToClient(res,null,500,"Failed to reject product")
     }
   });
 
   // Cart routes
-  app.post('/api/cart', isAuthenticated, async (req: any, res) => {
+  app.post('/api/cart', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const cartData = insertCartItemSchema.parse({
         ...req.body,
         userId,
       });
       
       const cartItem = await storage.addToCart(cartData);
-      res.json(cartItem);
+      respondToClient(res,cartItem,200,"Item added to cart successfully")
     } catch (error: any) {
       console.error("Error adding to cart:", error);
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Validation error", errors: error.errors });
+        return respondToClient(res,error.errors,400, "Validation error")
       }
-      res.status(500).json({ message: "Failed to add to cart" });
+      respondToClient(res,null,500,"Failed to add to cart")
     }
   });
 
-  app.get('/api/cart', isAuthenticated, async (req: any, res) => {
+  app.get('/api/cart', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const cartItems = await storage.getCartItems(userId);
-      res.json(cartItems);
+      respondToClient(res,cartItems,200,"Cart fetched successfully")
     } catch (error) {
       console.error("Error fetching cart:", error);
-      res.status(500).json({ message: "Failed to fetch cart" });
+      respondToClient(res,null,500,"Failed to fetch cart")
     }
   });
 
-  app.patch('/api/cart/:id', isAuthenticated, async (req: any, res) => {
+  app.patch('/api/cart/:id', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const { quantity } = req.body;
       
       if (!quantity || quantity < 1) {
-        return res.status(400).json({ message: "Invalid quantity" });
+        return respondToClient(res,null,400, "Invalid quantity. Quantity must be greater than 0")
       }
       
       // Verify the cart item belongs to the user
-      const cartItems = await storage.getCartItems(userId);
-      const cartItem = cartItems.find(item => item.id === req.params.id);
+      const cart = await storage.getCartItems(userId);
+      const cartItem = cart.items.find(item => item.id === req.params.id);
       
       if (!cartItem) {
-        return res.status(404).json({ message: "Cart item not found or access denied" });
+        return respondToClient(res,null,404, "Cart item not found or access denied")
       }
       
       const updated = await storage.updateCartItemQuantity(req.params.id, quantity);
-      res.json(updated);
+      respondToClient(res,updated,200,"Cart item updated successfully")
     } catch (error) {
       console.error("Error updating cart item:", error);
-      res.status(500).json({ message: "Failed to update cart item" });
+      respondToClient(res,null,500,"Failed to update cart item")
     }
   });
 
-  app.delete('/api/cart/:id', isAuthenticated, async (req: any, res) => {
+  app.delete('/api/cart/:id', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       
       // Verify the cart item belongs to the user
-      const cartItems = await storage.getCartItems(userId);
-      const cartItem = cartItems.find(item => item.id === req.params.id);
+      const cart = await storage.getCartItems(userId);
+      const cartItem = cart.items.find(item => item.id === req.params.id);
       
       if (!cartItem) {
-        return res.status(404).json({ message: "Cart item not found or access denied" });
+        return respondToClient(res,null,404, "Cart item not found or access denied")
       }
       
       await storage.removeCartItem(req.params.id);
-      res.json({ message: "Item removed from cart" });
+      respondToClient(res,null,200,"Item removed from cart")
     } catch (error) {
       console.error("Error removing cart item:", error);
-      res.status(500).json({ message: "Failed to remove cart item" });
+      respondToClient(res,null,500,"Failed to remove cart item")
     }
   });
 
-  app.delete('/api/cart', isAuthenticated, async (req: any, res) => {
+  app.delete('/api/cart', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       await storage.clearCart(userId);
-      res.json({ message: "Cart cleared" });
+      respondToClient(res,null,200,"Cart cleared")
     } catch (error) {
       console.error("Error clearing cart:", error);
-      res.status(500).json({ message: "Failed to clear cart" });
+      respondToClient(res,null,500,"Failed to clear cart")
     }
   });
 
   // Order routes
-  app.post('/api/orders', isAuthenticated, async (req: any, res) => {
+  app.post('/api/orders', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const orderData = insertOrderSchema.parse({
         ...req.body,
         buyerId: userId,
       });
       
       const order = await storage.createOrder(orderData);
-      res.json(order);
+      respondToClient(  res,order,200,"Order created successfully")
     } catch (error: any) {
       console.error("Error creating order:", error);
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Validation error", errors: error.errors });
+        return respondToClient(res,error.errors,400,"Validation error")
       }
-      res.status(500).json({ message: "Failed to create order" });
+      respondToClient(res,null,500,"Failed to create order")
     }
   });
 
-  app.get('/api/orders', isAuthenticated, async (req: any, res) => {
+  app.get('/api/orders', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const user = await storage.getUser(userId);
       const { type } = req.query;
       
@@ -342,83 +478,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const orders = await storage.getOrders(filters);
-      res.json(orders);
+      respondToClient(res,orders,200,"Orders fetched successfully")
     } catch (error) {
       console.error("Error fetching orders:", error);
-      res.status(500).json({ message: "Failed to fetch orders" });
+      respondToClient(res,null,500,"Failed to fetch orders")
     }
   });
 
-  app.get('/api/orders/:id', isAuthenticated, async (req: any, res) => {
+  app.get('/api/orders/:id', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const user = await storage.getUser(userId);
       
       const order = await storage.getOrder(req.params.id);
       if (!order) {
-        return res.status(404).json({ message: "Order not found" });
+        return respondToClient(res,null,404,"Order not found")
       }
       
       // Only buyer, seller, or admin can view this order
       if (order.buyerId !== userId && order.sellerId !== userId && user?.role !== "admin") {
-        return res.status(403).json({ message: "Not authorized to view this order" });
+        return respondToClient(res,null,403,"Not authorized to view this order")
       }
       
-      res.json(order);
+      respondToClient(res,order,200,"Order fetched successfully")
     } catch (error) {
       console.error("Error fetching order:", error);
-      res.status(500).json({ message: "Failed to fetch order" });
+      respondToClient(res,null,500,"Failed to fetch order")
     }
   });
 
-  app.patch('/api/orders/:id/status', isAuthenticated, async (req: any, res) => {
+  app.patch('/api/orders/:id/status', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const user = await storage.getUser(userId);
       const { status } = req.body;
       
       if (!status) {
-        return res.status(400).json({ message: "Status is required" });
+        return respondToClient(res,null,400,"Status is required")
       }
       
       const order = await storage.getOrder(req.params.id);
       if (!order) {
-        return res.status(404).json({ message: "Order not found" });
+        return respondToClient(res,null,404,"Order not found")
       }
       
       // Only seller or admin can update order status
       if (order.sellerId !== userId && user?.role !== "admin") {
-        return res.status(403).json({ message: "Not authorized to update order status" });
+        return respondToClient(res,null,403,"Not authorized to update order status")
       }
       
       const updated = await storage.updateOrderStatus(req.params.id, status);
-      res.json(updated);
+      respondToClient(res,updated,200,"Order status updated successfully")
     } catch (error) {
       console.error("Error updating order status:", error);
-      res.status(500).json({ message: "Failed to update order status" });
+      respondToClient(res,null,500,"Failed to update order status")
     }
   });
 
-  app.patch('/api/orders/:id/payment', isAuthenticated, async (req: any, res) => {
+  app.patch('/api/orders/:id/payment', authenticateToken, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const user = await storage.getUser(userId);
       
       const order = await storage.getOrder(req.params.id);
       if (!order) {
-        return res.status(404).json({ message: "Order not found" });
+        return respondToClient(res,null,404,"Order not found")
       }
       
       // Only buyer (for their own order), seller, or admin can update payment
       if (order.buyerId !== userId && order.sellerId !== userId && user?.role !== "admin") {
-        return res.status(403).json({ message: "Not authorized to update order payment" });
+        return respondToClient(res,null,403,"Not authorized to update order payment")
       }
       
       const updated = await storage.updateOrderPayment(req.params.id, req.body);
-      res.json(updated);
+      respondToClient(res,updated,200,"Order payment updated successfully")
     } catch (error) {
       console.error("Error updating order payment:", error);
-      res.status(500).json({ message: "Failed to update order payment" });
+      respondToClient(res,null,500,"Failed to update order payment")
     }
   });
 

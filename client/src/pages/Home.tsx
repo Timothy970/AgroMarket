@@ -9,87 +9,38 @@ import fruitsIcon from "@assets/generated_images/Fruits_category_icon_53db4367.p
 import vegetablesIcon from "@assets/generated_images/Vegetables_category_icon_831a17de.png";
 import grainsIcon from "@assets/generated_images/Grains_category_icon_66506445.png";
 import dairyIcon from "@assets/generated_images/Dairy_category_icon_08e6529b.png";
-import tomatoesImg from "@assets/generated_images/Sample_product_tomatoes_cc18b3ed.png";
-import lettuceImg from "@assets/generated_images/Sample_product_lettuce_e8e9e93a.png";
-import mangoesImg from "@assets/generated_images/Sample_product_mangoes_7f0ae531.png";
 import Footer from "@/components/footer";
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
+import { categoriesApi, productsApi } from "@/lib/api";
+import type { Category, Product } from "@shared/schema";
 export default function Home() {
   const [location, setLocation] = useLocation();
-  const categories = [
-    { icon: fruitsIcon, name: "Fruits", count: 24 },
-    { icon: vegetablesIcon, name: "Vegetables", count: 32 },
-    { icon: grainsIcon, name: "Grains", count: 18 },
-    { icon: dairyIcon, name: "Dairy", count: 12 },
-    { icon: dairyIcon, name: "Cereal", count: 120 },
-  ];
 
-  const featuredProducts = [
-    {
-      id: "1",
-      image: tomatoesImg,
-      name: "Organic Tomatoes",
-      seller: "John's Farm",
-      location: "Nairobi, Kenya",
-      smallPrice: 200,
-      smallUnit: "kg",
-      bulkPrice: 4500,
-      bulkUnit: "25kg sack",
-      approved: true,
-    },
-    {
-      id: "2",
-      image: lettuceImg,
-      name: "Fresh Lettuce",
-      seller: "Green Valley Farm",
-      location: "Nakuru, Kenya",
-      smallPrice: 150,
-      smallUnit: "kg",
-      bulkPrice: 3200,
-      bulkUnit: "20kg crate",
-      approved: true,
-    },
-    {
-      id: "3",
-      image: mangoesImg,
-      name: "Sweet Mangoes",
-      seller: "Tropical Farms",
-      location: "Mombasa, Kenya",
-      smallPrice: 180,
-      smallUnit: "kg",
-      bulkPrice: 8500,
-      bulkUnit: "50kg box",
-      approved: true,
-    },
-    {
-      id: "4",
-      image: tomatoesImg,
-      name: "Cherry Tomatoes",
-      seller: "Urban Gardens",
-      location: "Kiambu, Kenya",
-      smallPrice: 300,
-      smallUnit: "kg",
-      bulkPrice: null,
-      bulkUnit: "Not available",
-      approved: true,
-    },
-    {
-      id: "5",
-      image: tomatoesImg,
-      name: "Cherry Tomatoes",
-      seller: "Urban Gardens",
-      location: "Kiambu, Kenya",
-      smallPrice: 300,
-      smallUnit: "kg",
-      bulkPrice: 5400,
-      bulkUnit: "30kg crate",
-      approved: true,
-    },
-  ];
+  const { data: categoriesResponse, isLoading: categoriesLoading } = useQuery({
+    queryKey: ['categories'],
+    queryFn: categoriesApi.getAll,
+  });
 
-  const handleCategoryNavigation = () => {
+  const { data: featuredProductsResponse, isLoading: featuredProductsLoading } = useQuery({
+    queryKey: ['products'],
+    queryFn: () => productsApi.getAll(),
+  });
+
+  const categories = categoriesResponse?.data || [];
+  const featuredProductsData = featuredProductsResponse?.data || [];
+  // Fallback icon mapping
+  const categoryIcons: Record<string, string> = {
+    fruits: fruitsIcon,
+    vegetables: vegetablesIcon,
+    grains: grainsIcon,
+    dairy: dairyIcon,
+  };
+
+
+  const handleCategoryNavigation = (id: string) => {
     // navigate to /category/:id page
-    setLocation('/category/' + 1);
+    setLocation('/category/' + id);
   }
 
   return (
@@ -119,8 +70,9 @@ export default function Home() {
             <div className="flex flex-wrap gap-4">
               <Button
                 size="lg"
-                className="bg-white/95 backdrop-blur-md text-foreground hover:bg-white border border-white/50"
+                className="bg-white/95 backdrop-blur-md hover:bg-white border border-white/50 text-black"
                 data-testid="button-browse-products"
+                onClick={() => setLocation("/products")}
               >
                 Browse Products
                 <ArrowRight className="ml-2 w-4 h-4" />
@@ -130,6 +82,7 @@ export default function Home() {
                 variant="outline"
                 className="bg-white/10 backdrop-blur-md text-white border-white/30 hover:bg-white/20"
                 data-testid="button-sell-produce"
+                onClick={() => setLocation("/seller")}
               >
                 Sell Your Produce
               </Button>
@@ -146,9 +99,21 @@ export default function Home() {
             </h2>
           </div>
           <div className="grid grid-cols-3 md:grid-cols-5 gap-4">
-            {categories.map((category) => (
-              <CategoryCard key={category.name} {...category} onClick={handleCategoryNavigation} />
-            ))}
+            {categoriesLoading ? (
+              <p className="text-muted-foreground">Loading categories...</p>
+            ) : categories.length > 0 ? (
+              categories.map((category: Category) => (
+                <CategoryCard
+                  key={category.id}
+                  name={category.name}
+                  icon={category.imageUrl || categoryIcons[category.name.toLowerCase()] || dairyIcon}
+                  count={0}
+                  onClick={() => handleCategoryNavigation(category.id)}
+                />
+              ))
+            ) : (
+              <p className="text-muted-foreground">No categories available</p>
+            )}
           </div>
         </div>
       </section>
@@ -165,9 +130,15 @@ export default function Home() {
             </Button>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-            {featuredProducts.map((product) => (
-              <ProductCard key={product.id} {...product} />
-            ))}
+            {featuredProductsLoading ? (
+              <p className="text-muted-foreground">Loading products...</p>
+            ) : featuredProductsData.length > 0 ? (
+              featuredProductsData.map((product: Product) => (
+                <ProductCard key={product.id} product={product} onClick={() => setLocation(`/product/${product.id}`)} />
+              ))
+            ) : (
+              <p className="text-muted-foreground">No products available</p>
+            )}
           </div>
         </div>
       </section>

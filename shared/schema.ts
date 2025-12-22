@@ -32,6 +32,17 @@ export const purchaseModeEnum = pgEnum("purchase_mode", ["small", "bulk"]);
 export const payoutMethodEnum = pgEnum("payout_method", ["mobile_money", "bank_transfer", "paypal"]);
 export const orderStatusEnum = pgEnum("order_status", ["placed", "approved", "packed", "shipped", "awaiting_payment", "delivered", "cancelled"]);
 
+// Categories table
+export const categories = pgTable("categories", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name").notNull().unique(),
+  description: text("description"),
+  imageUrl: varchar("image_url"),
+  createdBy: varchar("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // User storage table (required for Replit Auth)
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -55,7 +66,7 @@ export const products = pgTable("products", {
   sellerId: varchar("seller_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description"),
-  category: varchar("category").notNull(),
+  categoryId: varchar("category_id").notNull().references(() => categories.id, { onDelete: "cascade" }),
   // Small purchase pricing
   smallPrice: decimal("small_price", { precision: 10, scale: 2 }).notNull(),
   smallUnit: varchar("small_unit").notNull().default("kg"),
@@ -81,7 +92,7 @@ export const products = pgTable("products", {
 }, (table) => [
   index("products_seller_idx").on(table.sellerId),
   index("products_status_idx").on(table.status),
-  index("products_category_idx").on(table.category),
+  index("products_category_idx").on(table.categoryId),
 ]);
 
 export const cartItems = pgTable("cart_items", {
@@ -129,7 +140,20 @@ export const orders = pgTable("orders", {
   index("orders_status_idx").on(table.status),
 ]);
 
+export const otpRequests = pgTable("otp_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: varchar("email").notNull(),
+  otp: varchar("otp").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  verified: boolean("verified").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Relations
+export const categoriesRelations = relations(categories, ({ many }) => ({
+  products: many(products),
+}));
+
 export const usersRelations = relations(users, ({ many }) => ({
   productsAsSeller: many(products, { relationName: "seller" }),
   cartItems: many(cartItems),
@@ -142,6 +166,10 @@ export const productsRelations = relations(products, ({ one, many }) => ({
     fields: [products.sellerId],
     references: [users.id],
     relationName: "seller",
+  }),
+  category: one(categories, {
+    fields: [products.categoryId],
+    references: [categories.id],
   }),
   cartItems: many(cartItems),
   orders: many(orders),
@@ -176,12 +204,21 @@ export const ordersRelations = relations(orders, ({ one }) => ({
 }));
 
 // Zod schemas for validation
+export const insertCategorySchema = createInsertSchema(categories).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const updateCategorySchema = insertCategorySchema.partial();
+
 export const upsertUserSchema = createInsertSchema(users).pick({
   id: true,
   email: true,
   firstName: true,
   lastName: true,
   profileImageUrl: true,
+  role: true,
 });
 
 export const insertProductSchema = createInsertSchema(products).omit({
@@ -191,6 +228,8 @@ export const insertProductSchema = createInsertSchema(products).omit({
   approvedBy: true,
   createdAt: true,
   updatedAt: true,
+}).extend({
+  harvestDate: z.coerce.date().optional(),
 });
 
 export const updateProductSchema = insertProductSchema.partial();
@@ -208,6 +247,9 @@ export const insertOrderSchema = createInsertSchema(orders).omit({
 });
 
 // Types
+export type InsertCategory = z.infer<typeof insertCategorySchema>;
+export type UpdateCategory = z.infer<typeof updateCategorySchema>;
+export type Category = typeof categories.$inferSelect;
 export type UpsertUser = z.infer<typeof upsertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type InsertProduct = z.infer<typeof insertProductSchema>;

@@ -3,6 +3,7 @@ import {
   products,
   cartItems,
   orders,
+  otpRequests,
   type User,
   type UpsertUser,
   type Product,
@@ -12,6 +13,10 @@ import {
   type InsertCartItem,
   type Order,
   type InsertOrder,
+  categories,
+  Category,
+  UpdateCategory,
+  InsertCategory,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, inArray } from "drizzle-orm";
@@ -19,6 +24,8 @@ import { eq, and, desc, inArray } from "drizzle-orm";
 export interface IStorage {
   // User operations (required for Replit Auth)
   getUser(id: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
+  createUser(user: Partial<UpsertUser>): Promise<User>;
   upsertUser(user: UpsertUser): Promise<User>;
   updateUserRole(userId: string, role: "buyer" | "seller" | "admin"): Promise<User>;
   updateUserPayoutMethod(userId: string, data: {
@@ -43,8 +50,22 @@ export interface IStorage {
   deleteProduct(id: string): Promise<void>;
   
   // Cart operations
-  addToCart(item: InsertCartItem): Promise<CartItem>;
-  getCartItems(userId: string): Promise<CartItem[]>;
+  addToCart(item: InsertCartItem): Promise<{
+    items: (CartItem & { product: Product })[];
+    sub_total: number;
+    discount: number;
+    total: number;
+    estimated_tax: number;
+    delivery_charge: number;
+  }>;
+  getCartItems(userId: string): Promise<{
+    items: (CartItem & { product: Product })[];
+    sub_total: number;
+    discount: number;
+    total: number;
+    estimated_tax: number;
+    delivery_charge: number;
+  }>;
   updateCartItemQuantity(id: string, quantity: number): Promise<CartItem>;
   removeCartItem(id: string): Promise<void>;
   clearCart(userId: string): Promise<void>;
@@ -63,12 +84,26 @@ export interface IStorage {
     balancePaid?: boolean;
     stripePaymentIntentId?: string;
   }): Promise<Order>;
+
+  // OTP operations
+  createOtpRequest(email: string, otp: string): Promise<void>;
+  verifyOtp(email: string, otp: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
   // User operations
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+
+  async createUser(userData: Partial<UpsertUser>): Promise<User> {
+    const [user] = await db.insert(users).values(userData).returning();
     return user;
   }
 
@@ -111,6 +146,34 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  //category opreations
+  async createCategory(category: InsertCategory): Promise<Category> {
+    const [newCategory] = await db.insert(categories).values(category).returning();
+    return newCategory;
+  }
+
+  async getCategory(id: string): Promise<Category | undefined> {
+    const [category] = await db.select().from(categories).where(eq(categories.id, id));
+    return category;
+  }
+
+  async getCategories(): Promise<Category[]> {
+    return db.select().from(categories).orderBy(desc(categories.createdAt));
+  }
+
+  async updateCategory(id: string, updates: UpdateCategory): Promise<Category> {
+    const [category] = await db
+      .update(categories)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(categories.id, id))
+      .returning();
+    return category;
+  }
+
+  async deleteCategory(id: string): Promise<void> {
+    await db.delete(categories).where(eq(categories.id, id));
+  }
+
   // Product operations
   async createProduct(product: InsertProduct): Promise<Product> {
     const [newProduct] = await db.insert(products).values(product).returning();
@@ -135,7 +198,7 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(products.sellerId, filters.sellerId));
     }
     if (filters?.category) {
-      conditions.push(eq(products.category, filters.category));
+      conditions.push(eq(products.categoryId, filters.category));
     }
     
     if (conditions.length > 0) {
@@ -186,7 +249,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Cart operations
-  async addToCart(item: InsertCartItem): Promise<CartItem> {
+  async addToCart(item: InsertCartItem): Promise<{
+    items: (CartItem & { product: Product })[];
+    sub_total: number;
+    discount: number;
+    total: number;
+    estimated_tax: number;
+    delivery_charge: number;
+  }> {
     // Check if item already exists in cart
     const [existing] = await db
       .select()
@@ -200,7 +270,7 @@ export class DatabaseStorage implements IStorage {
 
     if (existing) {
       // Update quantity if exists
-      const [updated] = await db
+      await db
         .update(cartItems)
         .set({ 
           quantity: (existing.quantity || 0) + (item.quantity || 1),
@@ -208,28 +278,70 @@ export class DatabaseStorage implements IStorage {
         })
         .where(eq(cartItems.id, existing.id))
         .returning();
-      return updated;
+    } else {
+      await db.insert(cartItems).values(item).returning();
     }
 
-    const [newItem] = await db.insert(cartItems).values(item).returning();
-    return newItem;
+    // Return full cart data
+    return this.getCartItems(item.userId);
   }
 
-  async getCartItems(userId: string): Promise<CartItem[]> {
-    return db.select().from(cartItems).where(eq(cartItems.userId, userId));
+  async getCartItems(userId: string): Promise<{
+    items: (CartItem & { product: Product })[];
+    sub_total: number;
+    discount: number;
+    total: number;
+    estimated_tax: number;
+    delivery_charge: number;
+  }> {
+    const items = await db
+      .select({
+        cartItem: cartItems,
+        product: products,
+      })
+      .from(cartItems)
+      .innerJoin(products, eq(cartItems.productId, products.id))
+      .where(eq(cartItems.userId, userId));
+
+    const detailedItems = items.map(({ cartItem, product }) => ({
+      ...cartItem,
+      product,
+    }));
+
+    let sub_total = 0;
+    for (const item of detailedItems) {
+      const price = item.purchaseMode === "bulk" && item.product.bulkPrice
+        ? Number(item.product.bulkPrice)
+        : Number(item.product.smallPrice);
+      sub_total += price * item.quantity;
+    }
+
+    const estimated_tax = Math.round(sub_total * 0.16);
+    const delivery_charge = 0;
+    const discount = 0;
+    const total = sub_total + estimated_tax + delivery_charge - discount;
+
+    return {
+      items: detailedItems,
+      sub_total,
+      discount,
+      total,
+      estimated_tax,
+      delivery_charge,
+    };
   }
 
   async updateCartItemQuantity(id: string, quantity: number): Promise<CartItem> {
     const [item] = await db
       .update(cartItems)
       .set({ quantity, updatedAt: new Date() })
-      .where(eq(cartItems.id, id))
+      .where(eq(cartItems.productId, id))
       .returning();
     return item;
   }
 
   async removeCartItem(id: string): Promise<void> {
-    await db.delete(cartItems).where(eq(cartItems.id, id));
+    await db.delete(cartItems).where(eq(cartItems.productId, id));
   }
 
   async clearCart(userId: string): Promise<void> {
@@ -290,6 +402,43 @@ export class DatabaseStorage implements IStorage {
       .where(eq(orders.id, id))
       .returning();
     return order;
+  }
+
+  // OTP operations
+  async createOtpRequest(email: string, otp: string): Promise<void> {
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    await db.insert(otpRequests).values({
+      email,
+      otp,
+      expiresAt,
+    });
+  }
+
+  async verifyOtp(email: string, otp: string): Promise<boolean> {
+    const [request] = await db
+      .select()
+      .from(otpRequests)
+      .where(
+        and(
+          eq(otpRequests.email, email),
+          eq(otpRequests.otp, otp),
+          eq(otpRequests.verified, false)
+        )
+      )
+      .orderBy(desc(otpRequests.createdAt))
+      .limit(1);
+
+    if (!request) return false;
+console.log("otp request___",request); 
+    if (new Date() > request.expiresAt) return false;
+
+    // Mark as verified
+    await db
+      .update(otpRequests)
+      .set({ verified: true })
+      .where(eq(otpRequests.id, request.id));
+
+    return true;
   }
 }
 
