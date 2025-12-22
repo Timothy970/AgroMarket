@@ -3,8 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import ThemeToggle from "./ThemeToggle";
-import { Link } from "wouter";
-import { useAuth } from "@/hooks/useAuth";
+import { Link, useLocation } from "wouter";
+import { useAuthStore } from "@/store/authStore";
+import { set } from "date-fns";
+import { useToast } from "@/hooks/use-toast";
 
 interface HeaderProps {
   cartCount?: number;
@@ -12,8 +14,10 @@ interface HeaderProps {
 }
 
 export default function Header({ cartCount = 0, showSearch = true }: HeaderProps) {
-  const { user } = useAuth();
-
+  const { user } = useAuthStore();
+  const { logout } = useAuthStore();
+  const { toast } = useToast();
+  const [, setLocation] = useLocation();
   return (
     <header className="sticky top-0 z-40 bg-background border-b border-border">
       <div className="max-w-7xl mx-auto px-4">
@@ -51,7 +55,7 @@ export default function Header({ cartCount = 0, showSearch = true }: HeaderProps
                 {cartCount > 0 && (
                   <Badge
                     variant="destructive"
-                    className="absolute -top-1 -right-1 h-5 min-w-5 px-1.5 text-xs flex items-center justify-center"
+                    className="absolute -bottom-1 -right-1 h-4 min-w-4 px-1 text-[10px] flex items-center justify-center"
                   >
                     {cartCount > 9 ? "9+" : cartCount}
                   </Badge>
@@ -63,7 +67,16 @@ export default function Header({ cartCount = 0, showSearch = true }: HeaderProps
                 variant="ghost"
                 size="default"
                 className="hidden md:inline-flex"
-                onClick={() => window.location.href = "/api/logout"}
+                onClick={() => {
+                  logout();
+                  toast({
+                    title: "Success",
+                    description: "You have been logged out.",
+                  });
+                  setTimeout(() => {
+                    setLocation("/");
+                  }, 500);
+                }}
                 data-testid="button-logout"
               >
                 <LogOut className="w-4 h-4 mr-2" />

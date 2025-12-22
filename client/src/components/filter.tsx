@@ -1,18 +1,20 @@
+import { categoriesApi } from '@/lib/api';
+import { Category } from '@shared/schema';
+import { useQuery } from '@tanstack/react-query';
 import React, { useState } from 'react';
 
 const Filters = () => {
-    const [selectedCategories, setSelectedCategories] = useState(['Vegetables']);
+    const [selectedCategories, setSelectedCategories] = useState<string[]>(['Vegetables']);
     const [priceRange, setPriceRange] = useState([0, 100]);
-    const [selectedSellerTypes, setSelectedSellerTypes] = useState([]);
-    const [selectedAvailability, setSelectedAvailability] = useState([]);
-    const [selectedCertifications, setSelectedCertifications] = useState(['Organic Certified']);
+    const [selectedSellerTypes, setSelectedSellerTypes] = useState<string[]>([]);
+    const [selectedAvailability, setSelectedAvailability] = useState<string[]>([]);
+    const [selectedCertifications, setSelectedCertifications] = useState<string[]>(['Organic Certified']);
 
-    const categories = [
-        { label: 'Vegetables', count: 847 },
-        { label: 'Fruits', count: 234 },
-        { label: 'Herbs', count: 89 },
-        { label: 'Seeds', count: 77 }
-    ];
+    const { data: categoriesResponse, isLoading: categoriesLoading } = useQuery({
+        queryKey: ['categories'],
+        queryFn: categoriesApi.getAll,
+    });
+    const categories = categoriesResponse?.data || [];
 
     const sellerTypes = [
         { label: 'Local Farms', count: 456 },
@@ -31,7 +33,7 @@ const Filters = () => {
         { label: 'Fair Trade', count: 234 }
     ];
 
-    const handleCheckboxChange = (value, selectedList, setSelectedList) => {
+    const handleCheckboxChange = (value: string, selectedList: string[], setSelectedList: React.Dispatch<React.SetStateAction<string[]>>) => {
         if (selectedList.includes(value)) {
             setSelectedList(selectedList.filter(item => item !== value));
         } else {
@@ -39,34 +41,36 @@ const Filters = () => {
         }
     };
 
-    const handlePriceChange = (e) => {
+    const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const value = parseInt(e.target.value);
         setPriceRange([0, value]);
     };
 
     return (
-        <div className="bg-gray-50 p-6 border-r border-gray-200">
+        <div className="bg-gray-50 w-full h-full p-6 border-r border-gray-200">
             <h2 className="text-lg font-semibold text-gray-800 mb-6">Filters</h2>
 
             {/* Category Section */}
-            <div className="mb-6">
-                <h3 className="text-sm font-semibold text-gray-700 mb-3">Category</h3>
-                <div className="space-y-2">
-                    {categories.map((category, idx) => (
-                        <label key={idx} className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={selectedCategories.includes(category.label)}
-                                onChange={() => handleCheckboxChange(category.label, selectedCategories, setSelectedCategories)}
-                                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            />
-                            <span className="text-sm text-gray-700">
-                                {category.label} ({category.count})
-                            </span>
-                        </label>
-                    ))}
+            {!categoriesLoading && categories.length > 0 && (
+                <div className="mb-6">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-3">Category</h3>
+                    <div className="space-y-2">
+                        {categories.map((category: Category) => (
+                            <label key={category.id} className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={selectedCategories.includes(category.name)}
+                                    onChange={() => handleCheckboxChange(category.name, selectedCategories, setSelectedCategories)}
+                                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="text-sm text-gray-700">
+                                    {category.name} (0)
+                                </span>
+                            </label>
+                        ))}
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* Price Range Section */}
             <div className="mb-6">

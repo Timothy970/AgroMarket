@@ -9,7 +9,7 @@ interface PurchaseModeToggleProps {
   onModeChange: (mode: PurchaseMode) => void;
   smallPrice: number;
   smallUnit: string;
-  bulkPrice: number;
+  bulkPrice: number | null;
   bulkUnit: string;
 }
 
@@ -31,9 +31,8 @@ export default function PurchaseModeToggle({
       className="grid gap-4"
     >
       <div
-        className={`relative rounded-xl border-2 p-4 cursor-pointer transition-all ${
-          mode === "small" ? "border-primary bg-primary/5" : "border-border bg-card"
-        }`}
+        className={`relative rounded-xl border-2 p-4 cursor-pointer transition-all ${mode === "small" ? "border-primary bg-primary/5" : "border-border bg-card"
+          }`}
         onClick={() => onModeChange("small")}
         data-testid="button-mode-small"
       >
@@ -57,9 +56,8 @@ export default function PurchaseModeToggle({
       </div>
 
       <div
-        className={`relative rounded-xl border-2 p-4 cursor-pointer transition-all ${
-          mode === "bulk" ? "border-primary bg-primary/5" : "border-border bg-card"
-        }`}
+        className={`relative rounded-xl border-2 p-4 cursor-pointer transition-all ${mode === "bulk" ? "border-primary bg-primary/5" : "border-border bg-card"
+          }`}
         onClick={() => onModeChange("bulk")}
         data-testid="button-mode-bulk"
       >
@@ -70,7 +68,7 @@ export default function PurchaseModeToggle({
               Bulk Purchase
             </Label>
             <p className="text-sm text-muted-foreground mt-1">
-              KES {bulkPrice.toLocaleString()} per {bulkUnit}
+              KES {bulkPrice ? bulkPrice.toLocaleString() : ""} per {bulkUnit}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
               For wholesalers and large orders with tiered pricing
