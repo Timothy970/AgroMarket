@@ -26,9 +26,12 @@ export default function CategoryPage() {
     });
     const cartCount = cartResponse?.data?.items?.length || 0;
 
+    const params = new URLSearchParams(window.location.search);
+    const searchParam = params.get("search") || "";
+
     const { data: productResponse, isLoading: productsLoading } = useQuery({
-        queryKey: ['products'],
-        queryFn: () => productsApi.getAll(),
+        queryKey: ['products', searchParam],
+        queryFn: () => productsApi.getAll({ search: searchParam }),
     });
 
     const allProducts = productResponse?.data || [];

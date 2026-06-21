@@ -9,8 +9,14 @@ import tomatoesImg from "@assets/generated_images/Sample_product_tomatoes_cc18b3
 import lettuceImg from "@assets/generated_images/Sample_product_lettuce_e8e9e93a.png";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/store/authStore";
-import { cartApi } from "@/lib/api";
+import { cartApi, ordersApi } from "@/lib/api";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import axios from "@/lib/axios";
 
 export default function Cart() {
   const [, setLocation] = useLocation();
@@ -23,6 +29,14 @@ export default function Cart() {
     queryFn: () => cartApi.getItems(token!),
     enabled: isAuthenticated,
   });
+
+  const [checkoutDialogOpen, setCheckoutDialogOpen] = useState(false);
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"mpesa" | "stripe">("mpesa");
+  const [mpesaType, setMpesaType] = useState<"till" | "paybill">("till");
+  const [payDeposit, setPayDeposit] = useState(false);
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
 
   const updateQuantityMutation = useMutation({
     mutationFn: ({ id, quantity, token }: { id: string; quantity: number; token: string }) =>
@@ -81,9 +95,143 @@ export default function Cart() {
     updateQuantityMutation.mutate({ id: productId, quantity, token });
   };
 
-  const removeItem = (id: string) => {
+  const removeItem = (productId: string) => {
     if (!token) return;
-    removeItemMutation.mutate({ id, token });
+    removeItemMutation.mutate({ id: productId, token });
+  };
+
+  const handlePlaceOrder = async () => {
+    if (!token) return;
+    if (!deliveryAddress.trim() || !phoneNumber.trim()) {
+      toast({
+        title: "Required Fields",
+        description: "Please provide both delivery address and contact phone number.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSubmittingOrder(true);
+    try {
+      const itemsBySeller: Record<string, typeof items> = {};
+      for (const item of items) {
+        const sId = item.product.sellerId;
+        if (!itemsBySeller[sId]) {
+          itemsBySeller[sId] = [];
+        }
+        itemsBySeller[sId].push(item);
+      }
+
+      const orderIds: string[] = [];
+      let totalAmountToPay = 0;
+
+      for (const [sellerId, sellerItems] of Object.entries(itemsBySeller)) {
+        let sellerSubtotal = 0;
+        const mappedItems = sellerItems.map((item) => {
+          const price = Number(item.purchaseMode === 'bulk' && item.product.bulkPrice
+            ? item.product.bulkPrice
+            : item.product.smallPrice);
+          const itemSubtotal = price * item.quantity;
+          sellerSubtotal += itemSubtotal;
+
+          return {
+            productId: item.productId,
+            productName: item.product.name,
+            quantity: item.quantity,
+            purchaseMode: item.purchaseMode,
+            unitPrice: price.toString(),
+            unit: item.purchaseMode === 'bulk' ? item.product.bulkUnit || 'unit' : item.product.smallUnit,
+            subtotal: itemSubtotal.toString(),
+          };
+        });
+
+        const deliveryFee = 500;
+        const estimatedTax = Math.round(sellerSubtotal * 0.16);
+        const totalAmount = sellerSubtotal + deliveryFee + estimatedTax;
+
+        const isBulkGroup = sellerItems.some(i => i.purchaseMode === 'bulk');
+        const depositAmount = isBulkGroup && payDeposit ? (totalAmount / 2) : null;
+        const remainingBalance = isBulkGroup && payDeposit ? (totalAmount / 2) : null;
+
+        totalAmountToPay += depositAmount ? Number(depositAmount) : Number(totalAmount);
+
+        const response = await ordersApi.create({
+          sellerId,
+          deliveryAddress,
+          subtotal: sellerSubtotal.toString(),
+          deliveryFee: deliveryFee.toString(),
+          totalAmount: totalAmount.toString(),
+          depositAmount: depositAmount ? depositAmount.toString() : null,
+          remainingBalance: remainingBalance ? remainingBalance.toString() : null,
+          status: 'placed',
+          depositPaid: false,
+          balancePaid: false,
+          items: mappedItems,
+        } as any);
+
+        if (response.status_code !== 200) {
+          throw new Error(response.message || "Failed to place order");
+        }
+
+        if (response.data?.id) {
+          orderIds.push(response.data.id);
+        }
+      }
+
+      await cartApi.clear(token);
+      queryClient.invalidateQueries({ queryKey: ['cart'] });
+
+      if (paymentMethod === "stripe") {
+        const payRes = await axios.post("/api/payments/stripe/create-checkout-session", {
+          orderId: orderIds[0],
+          amount: totalAmountToPay,
+          isDeposit: payDeposit,
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        
+        toast({
+          title: "Redirecting to Stripe",
+          description: "Please complete the card payment.",
+        });
+        
+        if (payRes.data?.data?.url) {
+          window.location.href = payRes.data.data.url;
+          return;
+        }
+      } else {
+        const payRes = await axios.post("/api/payments/mpesa/stkpush", {
+          orderId: orderIds[0],
+          phoneNumber: phoneNumber.trim(),
+          amount: totalAmountToPay,
+          type: mpesaType,
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        toast({
+          title: "M-Pesa STK Push Sent",
+          description: "Please enter your PIN on your mobile phone to complete the transaction.",
+        });
+      }
+
+      setCheckoutDialogOpen(false);
+      
+      if (orderIds.length > 0) {
+        setLocation(`/orders/${orderIds[0]}`);
+      } else {
+        setLocation("/");
+      }
+    } catch (error: any) {
+      console.error("Order submission/payment error:", error);
+      toast({
+        title: "Checkout Failed",
+        description: error.message || "Something went wrong while placing your order.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmittingOrder(false);
+    }
   };
 
   return (
@@ -162,11 +310,111 @@ export default function Cart() {
                 <Button
                   size="lg"
                   className="w-full"
-                  onClick={() => console.log('Proceeding to checkout')}
+                  onClick={() => setCheckoutDialogOpen(true)}
                   data-testid="button-checkout"
                 >
                   Proceed to Checkout
                 </Button>
+
+                <Dialog open={checkoutDialogOpen} onOpenChange={setCheckoutDialogOpen}>
+                  <DialogContent className="max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>Complete Your Order</DialogTitle>
+                      <DialogDescription>
+                        Please enter your delivery details to complete checkout.
+                      </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="phone">Contact Phone Number</Label>
+                        <Input
+                          id="phone"
+                          type="tel"
+                          placeholder="e.g., +254 700 000000"
+                          value={phoneNumber}
+                          onChange={(e) => setPhoneNumber(e.target.value)}
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="address">Delivery Address</Label>
+                        <Textarea
+                          id="address"
+                          placeholder="e.g., Apartment 4B, Karen Estate, Nairobi"
+                          value={deliveryAddress}
+                          onChange={(e) => setDeliveryAddress(e.target.value)}
+                          className="min-h-[80px]"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="payment">Payment Option</Label>
+                        <Select
+                          value={paymentMethod}
+                          onValueChange={(val: any) => setPaymentMethod(val)}
+                        >
+                          <SelectTrigger id="payment">
+                            <SelectValue placeholder="Select Payment Option" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="mpesa">Mobile Money (M-Pesa)</SelectItem>
+                            <SelectItem value="stripe">Card Payment (Stripe)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {paymentMethod === "mpesa" && (
+                        <div className="space-y-1.5">
+                          <Label htmlFor="mpesa-type">M-Pesa Transaction Channel</Label>
+                          <Select
+                            value={mpesaType}
+                            onValueChange={(val: any) => setMpesaType(val)}
+                          >
+                            <SelectTrigger id="mpesa-type">
+                              <SelectValue placeholder="Select M-Pesa Type" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="till">Till Number (Buy Goods)</SelectItem>
+                              <SelectItem value="paybill">Paybill</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
+                      {items.some(i => i.purchaseMode === 'bulk') && (
+                        <div className="flex items-center gap-2 pt-2">
+                          <input
+                            type="checkbox"
+                            id="pay-deposit"
+                            checked={payDeposit}
+                            onChange={(e) => setPayDeposit(e.target.checked)}
+                            className="rounded border-gray-300 text-primary focus:ring-primary h-4 w-4"
+                          />
+                          <Label htmlFor="pay-deposit" className="text-sm font-medium leading-none cursor-pointer">
+                            Pay 50% Deposit upfront (Bulk Order Option)
+                          </Label>
+                        </div>
+                      )}
+                    </div>
+
+                    <DialogFooter>
+                      <Button
+                        variant="outline"
+                        onClick={() => setCheckoutDialogOpen(false)}
+                        disabled={isSubmittingOrder}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={handlePlaceOrder}
+                        disabled={isSubmittingOrder}
+                      >
+                        {isSubmittingOrder ? "Placing Order..." : "Confirm & Place Order"}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </div>
             </div>
           </div>

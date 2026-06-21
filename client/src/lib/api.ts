@@ -9,8 +9,13 @@ import type {
   InsertCartItem,
   Order,
   InsertOrder,
-  User
+  User,
+  OrderItem
 } from '@shared/schema';
+
+export type OrderWithItems = Order & {
+  items: (OrderItem & { image?: string | null })[];
+};
 
 // API Response wrapper type
 type ApiResponse<T> = {
@@ -34,7 +39,7 @@ export const categoriesApi = {
 
 // Products API
 export const productsApi = {
-  getAll: async (filters?: { status?: 'pending' | 'approved' | 'rejected'; sellerId?: string; category?: string }): Promise<ApiResponse<Product[]>> => {
+  getAll: async (filters?: { status?: 'pending' | 'approved' | 'rejected'; sellerId?: string; category?: string; search?: string }): Promise<ApiResponse<Product[]>> => {
     const response = await api.get<ApiResponse<Product[]>>('/api/products', { params: filters });
     return response.data;
   },
@@ -44,7 +49,7 @@ export const productsApi = {
     return response.data;
   },
   
-  create: async (data: InsertProduct): Promise<ApiResponse<Product>> => {
+  create: async (data: Omit<InsertProduct, 'sellerId'>): Promise<ApiResponse<Product>> => {
     const response = await api.post<ApiResponse<Product>>('/api/products', data);
     return response.data;
   },
@@ -122,13 +127,13 @@ export const cartApi = {
 };
 
 export const ordersApi = {
-  getAll: async (type?: 'buyer' | 'seller'): Promise<ApiResponse<Order[]>> => {
-    const response = await api.get<ApiResponse<Order[]>>('/api/orders', { params: { type } });
+  getAll: async (type?: 'buyer' | 'seller'): Promise<ApiResponse<OrderWithItems[]>> => {
+    const response = await api.get<ApiResponse<OrderWithItems[]>>('/api/orders', { params: { type } });
     return response.data;
   },
   
-  getById: async (id: string): Promise<ApiResponse<Order>> => {
-    const response = await api.get<ApiResponse<Order>>(`/api/orders/${id}`);
+  getById: async (id: string): Promise<ApiResponse<OrderWithItems>> => {
+    const response = await api.get<ApiResponse<OrderWithItems>>(`/api/orders/${id}`);
     return response.data;
   },
   

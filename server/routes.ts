@@ -1,10 +1,36 @@
-import type { Express } from "express";
+import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertProductSchema, updateProductSchema, insertCartItemSchema, insertOrderSchema, insertCategorySchema } from "@shared/schema";
+import { insertProductSchema, updateProductSchema, insertCartItemSchema, insertOrderSchema, insertCategorySchema, insertOrderItemSchema } from "@shared/schema";
 import { z } from "zod";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import Stripe from "stripe";
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "dummy_secret", {
+  apiVersion: "2025-01-27.acacia" as any,
+});
+
+// Configure local uploads storage
+const uploadDir = path.join(process.cwd(), "public", "uploads");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storageConfig = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  },
+});
+
+const upload = multer({ storage: storageConfig });
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -24,6 +50,48 @@ function authenticateToken(req: any, res: any, next: any) {
     next();
   });
 }
+
+async function sendSMSNotification(phone: string, messageText: string) {
+  const formattedPhone = phone.replace(/\+/g, '').replace(/^0/, '254');
+  console.log(`[SMS NOTIFICATION] Sent to +${formattedPhone}: ${messageText}`);
+
+  if (process.env.TWILIO_ACCOUNT_SID && !process.env.TWILIO_ACCOUNT_SID.includes("placeholder")) {
+    try {
+      const twilio = (await import("twilio")).default;
+      const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+      await client.messages.create({
+        body: messageText,
+        from: process.env.TWILIO_PHONE_NUMBER,
+        to: `+${formattedPhone}`,
+      });
+      console.log("SMS sent successfully via Twilio");
+    } catch (err) {
+      console.error("Failed to send SMS via Twilio:", err);
+    }
+  }
+}
+
+async function handleMpesaCallbackLogic(orderId: string, payload: any) {
+  const resultCode = payload.Body.stkCallback.ResultCode;
+  if (resultCode === 0) {
+    const items = payload.Body.stkCallback.CallbackMetadata?.Item || [];
+    const receiptItem = items.find((i: any) => i.Name === "MpesaReceiptNumber");
+    const receipt = receiptItem ? receiptItem.Value : "MPESA_SUCCESS";
+    
+    const order = await storage.getOrder(orderId);
+    if (order) {
+      const isDeposit = order.items.some(i => i.purchaseMode === 'bulk') && !order.depositPaid;
+      if (isDeposit) {
+        await storage.updateOrderPayment(orderId, { depositPaid: true, stripePaymentIntentId: receipt });
+      } else {
+        await storage.updateOrderPayment(orderId, { balancePaid: true, stripePaymentIntentId: receipt });
+        await storage.updateOrderStatus(orderId, "approved");
+      }
+      console.log(`M-Pesa payment processed for Order ${orderId}, Receipt: ${receipt}`);
+    }
+  }
+}
+
  function respondToClient(res: any,data: any , status: number, message: string) {
   res.status(status).json({ 
     "message": message,
@@ -91,6 +159,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const token = generateAccessToken(user);
     respondToClient(res,{ token, user },200,"Login successful")
+  });
+
+  // Local File Upload Route
+  app.post('/api/upload', authenticateToken, upload.single('image'), (req: any, res) => {
+    try {
+      if (!req.file) {
+        return respondToClient(res, null, 400, "No file uploaded");
+      }
+      const fileUrl = `/uploads/${req.file.filename}`;
+      respondToClient(res, { url: fileUrl }, 200, "Image uploaded successfully");
+    } catch (error) {
+      console.error("Upload error:", error);
+      respondToClient(res, null, 500, "Failed to upload image");
+    }
   });
 
   app.get('/api/auth/user', authenticateToken, async (req: any, res) => {
@@ -225,11 +307,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/products', async (req, res) => {
     try {
-      const { status, sellerId, category } = req.query;
+      const { status, sellerId, category, search } = req.query;
       const products = await storage.getProducts({
         status: status as any,
         sellerId: sellerId as string,
         category: category as string,
+        search: search as string,
       });
       respondToClient(res,products,200,"Products fetched successfully")
     } catch (error) {
@@ -341,6 +424,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Admin users route
+  app.get('/api/admin/users', authenticateToken, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const user = await storage.getUser(userId);
+      if (user?.role !== "admin") {
+        return respondToClient(res, null, 403, "Admin access required");
+      }
+      const allUsers = await storage.getUsers();
+      respondToClient(res, allUsers, 200, "Users fetched successfully");
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      respondToClient(res, null, 500, "Failed to fetch users");
+    }
+  });
+
   // Cart routes
   app.post('/api/cart', authenticateToken, async (req: any, res) => {
     try {
@@ -432,19 +531,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/orders', authenticateToken, async (req: any, res) => {
     try {
       const userId = req.user.id;
+      const { items, ...orderRest } = req.body;
+
+      if (!Array.isArray(items) || items.length === 0) {
+        return respondToClient(res, null, 400, "Order must contain at least one item");
+      }
+
       const orderData = insertOrderSchema.parse({
-        ...req.body,
+        ...orderRest,
         buyerId: userId,
       });
+
+      const parsedItems = z.array(insertOrderItemSchema.omit({ orderId: true })).parse(items);
       
-      const order = await storage.createOrder(orderData);
-      respondToClient(  res,order,200,"Order created successfully")
+      const order = await storage.createOrder(orderData, parsedItems);
+      
+      const seller = await storage.getUser(order.sellerId);
+      if (seller && seller.mobileNumber) {
+        await sendSMSNotification(seller.mobileNumber, `AgroMarket: You have a new order #${order.id.slice(0, 8)} waiting. Please open your seller dashboard to approve.`);
+      }
+      
+      respondToClient(res, order, 200, "Order created successfully");
     } catch (error: any) {
       console.error("Error creating order:", error);
       if (error instanceof z.ZodError) {
-        return respondToClient(res,error.errors,400,"Validation error")
+        return respondToClient(res, error.errors, 400, "Validation error");
       }
-      respondToClient(res,null,500,"Failed to create order")
+      respondToClient(res, null, 500, "Failed to create order");
     }
   });
 
@@ -528,6 +641,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const updated = await storage.updateOrderStatus(req.params.id, status);
+      
+      const buyer = await storage.getUser(order.buyerId);
+      if (buyer && buyer.mobileNumber) {
+        await sendSMSNotification(buyer.mobileNumber, `AgroMarket: Your order #${order.id.slice(0, 8)} status has changed to "${status.toUpperCase()}".`);
+      }
+      
       respondToClient(res,updated,200,"Order status updated successfully")
     } catch (error) {
       console.error("Error updating order status:", error);
@@ -555,6 +674,208 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating order payment:", error);
       respondToClient(res,null,500,"Failed to update order payment")
+    }
+  });
+
+  // Chat endpoints
+  app.get('/api/chat/messages/:receiverId', authenticateToken, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const { receiverId } = req.params;
+      const messages = await storage.getMessages(userId, receiverId);
+      respondToClient(res, messages, 200, "Messages fetched successfully");
+    } catch (error) {
+      console.error("Error fetching chat messages:", error);
+      respondToClient(res, null, 500, "Failed to fetch chat messages");
+    }
+  });
+
+  app.get('/api/chat/conversations', authenticateToken, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const conversations = await storage.getConversations(userId);
+      respondToClient(res, conversations, 200, "Conversations fetched successfully");
+    } catch (error) {
+      console.error("Error fetching conversations:", error);
+      respondToClient(res, null, 500, "Failed to fetch conversations");
+    }
+  });
+
+  // Stripe payments endpoints
+  app.post('/api/payments/stripe/create-checkout-session', authenticateToken, async (req: any, res) => {
+    try {
+      const { orderId, amount, isDeposit } = req.body;
+      if (!orderId || !amount) {
+        return respondToClient(res, null, 400, "orderId and amount are required");
+      }
+
+      if (!process.env.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY.includes("placeholder")) {
+        const mockSessionId = "cs_test_" + crypto.randomBytes(16).toString("hex");
+        return respondToClient(res, { url: `/orders/${orderId}?payment=stripe_success`, id: mockSessionId }, 200, "Simulated Checkout Session created");
+      }
+
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ['card'],
+        line_items: [
+          {
+            price_data: {
+              currency: 'kes',
+              product_data: {
+                name: `Payment for Order #${orderId.slice(0, 8)} ${isDeposit ? '(Deposit)' : '(Full Payment)'}`,
+              },
+              unit_amount: Math.round(Number(amount) * 100),
+            },
+            quantity: 1,
+          },
+        ],
+        mode: 'payment',
+        success_url: `${req.headers.origin || "http://localhost:8010"}/orders/${orderId}?payment=stripe_success`,
+        cancel_url: `${req.headers.origin || "http://localhost:8010"}/orders/${orderId}?payment=stripe_cancel`,
+        metadata: {
+          orderId,
+          isDeposit: isDeposit ? 'true' : 'false',
+        },
+      });
+
+      respondToClient(res, { url: session.url, id: session.id }, 200, "Stripe Checkout Session created");
+    } catch (error: any) {
+      console.error("Error creating Stripe checkout session:", error);
+      respondToClient(res, null, 500, error.message || "Failed to create checkout session");
+    }
+  });
+
+  app.post('/api/payments/stripe/webhook', express.raw({ type: 'application/json' }), async (req: any, res) => {
+    const sig = req.headers['stripe-signature'];
+    let event;
+
+    try {
+      if (process.env.STRIPE_WEBHOOK_SECRET && sig) {
+        event = stripe.webhooks.constructEvent(req.rawBody as any, sig, process.env.STRIPE_WEBHOOK_SECRET);
+      } else {
+        event = req.body;
+      }
+    } catch (err: any) {
+      console.error("Webhook signature verification failed:", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object;
+      const orderId = session.metadata?.orderId;
+      const isDeposit = session.metadata?.isDeposit === 'true';
+
+      if (orderId) {
+        if (isDeposit) {
+          await storage.updateOrderPayment(orderId, { depositPaid: true, stripePaymentIntentId: session.payment_intent as string });
+        } else {
+          await storage.updateOrderPayment(orderId, { balancePaid: true, stripePaymentIntentId: session.payment_intent as string });
+          await storage.updateOrderStatus(orderId, "approved");
+        }
+        console.log(`Payment updated for Order ${orderId}`);
+      }
+    }
+
+    res.json({ received: true });
+  });
+
+  // M-Pesa payment endpoints
+  app.post('/api/payments/mpesa/stkpush', authenticateToken, async (req: any, res) => {
+    try {
+      const { orderId, phoneNumber, amount, type, shortcode, accountRef } = req.body;
+      if (!orderId || !phoneNumber || !amount) {
+        return respondToClient(res, null, 400, "orderId, phoneNumber, and amount are required");
+      }
+
+      const formattedPhone = phoneNumber.replace(/\+/g, '').replace(/^0/, '254');
+
+      console.log(`Triggering M-Pesa STK Push to ${formattedPhone} for KES ${amount} (${type})`);
+
+      if (!process.env.MPESA_CONSUMER_KEY || process.env.MPESA_CONSUMER_KEY.includes("placeholder")) {
+        setTimeout(async () => {
+          console.log(`Simulating M-Pesa Callback for Order ${orderId}`);
+          const fakeCallback = {
+            Body: {
+              stkCallback: {
+                MerchantRequestID: "fake-merchant-id-" + crypto.randomUUID(),
+                CheckoutRequestID: "fake-checkout-id-" + crypto.randomUUID(),
+                ResultCode: 0,
+                ResultDesc: "The service request is processed successfully.",
+                CallbackMetadata: {
+                  Item: [
+                    { Name: "Amount", Value: amount },
+                    { Name: "MpesaReceiptNumber", Value: "NL" + crypto.randomBytes(4).toString("hex").toUpperCase() },
+                    { Name: "TransactionDate", Value: Date.now() },
+                    { Name: "PhoneNumber", Value: formattedPhone }
+                  ]
+                }
+              }
+            }
+          };
+          await handleMpesaCallbackLogic(orderId, fakeCallback);
+        }, 3000);
+
+        return respondToClient(res, { 
+          MerchantRequestID: "simulated-merchant-id", 
+          CheckoutRequestID: "simulated-checkout-id", 
+          ResponseDescription: "Success. Request accepted for processing." 
+        }, 200, "M-Pesa STK Push Simulated");
+      }
+
+      const auth = Buffer.from(`${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`).toString("base64");
+      const authResponse = await fetch("https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials", {
+        headers: { Authorization: `Basic ${auth}` }
+      });
+      const authData: any = await authResponse.json();
+      const accessToken = authData.access_token;
+
+      const shortCode = shortcode || process.env.MPESA_SHORTCODE || "174379";
+      const passKey = process.env.MPESA_PASSKEY || "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
+      const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+      const password = Buffer.from(`${shortCode}${passKey}${timestamp}`).toString("base64");
+
+      const commandId = type === "till" ? "CustomerBuyGoodsOnline" : "CustomerPayBillOnline";
+      
+      const bodyPayload = {
+        BusinessShortCode: shortCode,
+        Password: password,
+        Timestamp: timestamp,
+        TransactionType: commandId,
+        Amount: Math.round(Number(amount)),
+        PartyA: formattedPhone,
+        PartyB: shortCode,
+        PhoneNumber: formattedPhone,
+        CallBackURL: (process.env.MPESA_CALLBACK_URL || "http://localhost:8010/api/payments/mpesa/callback") + `?orderId=${orderId}`,
+        AccountReference: accountRef || `Order-${orderId.slice(0, 6)}`,
+        TransactionDesc: `AgroMarket Payment ${orderId.slice(0, 6)}`
+      };
+
+      const response = await fetch("https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/query", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(bodyPayload)
+      });
+
+      const resData: any = await response.json();
+      respondToClient(res, resData, 200, "M-Pesa STK Push Sent");
+    } catch (error: any) {
+      console.error("M-Pesa STK Push error:", error);
+      respondToClient(res, null, 500, error.message || "Failed to trigger M-Pesa STK Push");
+    }
+  });
+
+  app.post('/api/payments/mpesa/callback', async (req, res) => {
+    try {
+      const { orderId } = req.query;
+      if (orderId) {
+        await handleMpesaCallbackLogic(orderId as string, req.body);
+      }
+      res.status(200).send("OK");
+    } catch (error) {
+      console.error("Error processing M-Pesa callback:", error);
+      res.status(500).send("Callback processing failed");
     }
   });
 

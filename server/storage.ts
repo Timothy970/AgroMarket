@@ -17,14 +17,21 @@ import {
   Category,
   UpdateCategory,
   InsertCategory,
+  orderItems,
+  type OrderItem,
+  type InsertOrderItem,
+  messages,
+  type Message,
+  type InsertMessage,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, or, ilike } from "drizzle-orm";
 
 export interface IStorage {
   // User operations (required for Replit Auth)
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUsers(): Promise<User[]>;
   createUser(user: Partial<UpsertUser>): Promise<User>;
   upsertUser(user: UpsertUser): Promise<User>;
   updateUserRole(userId: string, role: "buyer" | "seller" | "admin"): Promise<User>;
@@ -43,6 +50,7 @@ export interface IStorage {
     status?: "pending" | "approved" | "rejected";
     sellerId?: string;
     category?: string;
+    search?: string;
   }): Promise<Product[]>;
   updateProduct(id: string, updates: UpdateProduct): Promise<Product>;
   approveProduct(id: string, adminId: string): Promise<Product>;
@@ -71,19 +79,24 @@ export interface IStorage {
   clearCart(userId: string): Promise<void>;
   
   // Order operations
-  createOrder(order: InsertOrder): Promise<Order>;
-  getOrder(id: string): Promise<Order | undefined>;
+  createOrder(order: InsertOrder, items: Omit<InsertOrderItem, "orderId">[]): Promise<Order & { items: OrderItem[] }>;
+  getOrder(id: string): Promise<(Order & { items: OrderItem[] }) | undefined>;
   getOrders(filters?: {
     buyerId?: string;
     sellerId?: string;
     status?: string;
-  }): Promise<Order[]>;
+  }): Promise<(Order & { items: OrderItem[] })[]>;
   updateOrderStatus(id: string, status: string): Promise<Order>;
   updateOrderPayment(id: string, updates: {
     depositPaid?: boolean;
     balancePaid?: boolean;
     stripePaymentIntentId?: string;
   }): Promise<Order>;
+
+  // Chat operations
+  createMessage(message: InsertMessage): Promise<Message>;
+  getMessages(userId1: string, userId2: string): Promise<Message[]>;
+  getConversations(userId: string): Promise<{ otherUser: User; lastMessage: Message }[]>;
 
   // OTP operations
   createOtpRequest(email: string, otp: string): Promise<void>;
@@ -95,6 +108,10 @@ export class DatabaseStorage implements IStorage {
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
+  }
+
+  async getUsers(): Promise<User[]> {
+    return db.select().from(users).orderBy(desc(users.createdAt));
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
@@ -189,6 +206,7 @@ export class DatabaseStorage implements IStorage {
     status?: "pending" | "approved" | "rejected";
     sellerId?: string;
     category?: string;
+    search?: string;
   }): Promise<Product[]> {
     const conditions = [];
     if (filters?.status) {
@@ -199,6 +217,14 @@ export class DatabaseStorage implements IStorage {
     }
     if (filters?.category) {
       conditions.push(eq(products.categoryId, filters.category));
+    }
+    if (filters?.search) {
+      conditions.push(
+        or(
+          ilike(products.name, `%${filters.search}%`),
+          ilike(products.description, `%${filters.search}%`)
+        )
+      );
     }
     
     if (conditions.length > 0) {
@@ -349,21 +375,49 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Order operations
-  async createOrder(order: InsertOrder): Promise<Order> {
-    const [newOrder] = await db.insert(orders).values(order).returning();
-    return newOrder;
+  async createOrder(order: InsertOrder, items: Omit<InsertOrderItem, "orderId">[]): Promise<Order & { items: OrderItem[] }> {
+    return await db.transaction(async (tx) => {
+      const [newOrder] = await tx.insert(orders).values(order).returning();
+      const itemsToInsert = items.map((item) => ({
+        ...item,
+        orderId: newOrder.id,
+      }));
+      const newItems = await tx.insert(orderItems).values(itemsToInsert).returning();
+      return {
+        ...newOrder,
+        items: newItems,
+      };
+    });
   }
 
-  async getOrder(id: string): Promise<Order | undefined> {
+  async getOrder(id: string): Promise<(Order & { items: (OrderItem & { image: string })[] }) | undefined> {
     const [order] = await db.select().from(orders).where(eq(orders.id, id));
-    return order;
+    if (!order) return undefined;
+    const items = await db
+      .select({
+        item: orderItems,
+        product: products,
+      })
+      .from(orderItems)
+      .innerJoin(products, eq(orderItems.productId, products.id))
+      .where(eq(orderItems.orderId, id));
+    
+    const detailedItems = items.map(({ item, product }) => ({
+      ...item,
+      image: product.images[0] || "",
+    }));
+
+    return {
+      ...order,
+      items: detailedItems,
+    };
   }
 
   async getOrders(filters?: {
     buyerId?: string;
     sellerId?: string;
     status?: string;
-  }): Promise<Order[]> {
+  }): Promise<(Order & { items: (OrderItem & { image: string })[] })[]> {
     const conditions = [];
     if (filters?.buyerId) {
       conditions.push(eq(orders.buyerId, filters.buyerId));
@@ -375,11 +429,34 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(orders.status, filters.status as any));
     }
     
+    let fetchedOrders: Order[];
     if (conditions.length > 0) {
-      return db.select().from(orders).where(and(...conditions)).orderBy(desc(orders.createdAt));
+      fetchedOrders = await db.select().from(orders).where(and(...conditions)).orderBy(desc(orders.createdAt));
+    } else {
+      fetchedOrders = await db.select().from(orders).orderBy(desc(orders.createdAt));
     }
-    
-    return db.select().from(orders).orderBy(desc(orders.createdAt));
+
+    if (fetchedOrders.length === 0) return [];
+
+    const orderIds = fetchedOrders.map(o => o.id);
+    const allItems = await db
+      .select({
+        item: orderItems,
+        product: products,
+      })
+      .from(orderItems)
+      .innerJoin(products, eq(orderItems.productId, products.id))
+      .where(inArray(orderItems.orderId, orderIds));
+
+    const detailedItems = allItems.map(({ item, product }) => ({
+      ...item,
+      image: product.images[0] || "",
+    }));
+
+    return fetchedOrders.map(order => ({
+      ...order,
+      items: detailedItems.filter(item => item.orderId === order.id),
+    }));
   }
 
   async updateOrderStatus(id: string, status: string): Promise<Order> {
@@ -439,6 +516,75 @@ console.log("otp request___",request);
       .where(eq(otpRequests.id, request.id));
 
     return true;
+  }
+
+  // Chat operations
+  async createMessage(message: InsertMessage): Promise<Message> {
+    const [newMessage] = await db.insert(messages).values(message).returning();
+    return newMessage;
+  }
+
+  async getMessages(userId1: string, userId2: string): Promise<Message[]> {
+    return db
+      .select()
+      .from(messages)
+      .where(
+        or(
+          and(eq(messages.senderId, userId1), eq(messages.receiverId, userId2)),
+          and(eq(messages.senderId, userId2), eq(messages.receiverId, userId1))
+        )
+      )
+      .orderBy(messages.createdAt);
+  }
+
+  async getConversations(userId: string): Promise<{ otherUser: User; lastMessage: Message }[]> {
+    const allUserMessages = await db
+      .select({
+        message: messages,
+      })
+      .from(messages)
+      .where(
+        or(
+          eq(messages.senderId, userId),
+          eq(messages.receiverId, userId)
+        )
+      )
+      .orderBy(desc(messages.createdAt));
+
+    const conversationsMap = new Map<string, { otherUserId: string; lastMessage: Message }>();
+    
+    for (const row of allUserMessages) {
+      const msg = row.message;
+      const partnerId = msg.senderId === userId ? msg.receiverId : msg.senderId;
+      
+      if (!conversationsMap.has(partnerId)) {
+        conversationsMap.set(partnerId, {
+          otherUserId: partnerId,
+          lastMessage: msg,
+        });
+      }
+    }
+
+    const result: { otherUser: User; lastMessage: Message }[] = [];
+    const partnerIds: string[] = [];
+    conversationsMap.forEach((_, partnerId) => {
+      partnerIds.push(partnerId);
+    });
+
+    for (const partnerId of partnerIds) {
+      const partner = await this.getUser(partnerId);
+      if (partner) {
+        const data = conversationsMap.get(partnerId);
+        if (data) {
+          result.push({
+            otherUser: partner,
+            lastMessage: data.lastMessage,
+          });
+        }
+      }
+    }
+
+    return result;
   }
 }
 

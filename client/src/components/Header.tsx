@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ShoppingCart, Search, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +18,21 @@ export default function Header({ cartCount = 0, showSearch = true }: HeaderProps
   const { user } = useAuthStore();
   const { logout } = useAuthStore();
   const { toast } = useToast();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
+
+  const [searchVal, setSearchVal] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("search") || "";
+  });
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchVal.trim()) {
+      setLocation(`/products?search=${encodeURIComponent(searchVal.trim())}`);
+    } else {
+      setLocation("/products");
+    }
+  };
   return (
     <header className="sticky top-0 z-40 bg-background border-b border-border">
       <div className="max-w-7xl mx-auto px-4">
@@ -34,17 +49,19 @@ export default function Header({ cartCount = 0, showSearch = true }: HeaderProps
           </Link>
 
           {showSearch && (
-            <div className="hidden md:flex flex-1 max-w-md">
+            <form onSubmit={handleSearchSubmit} className="hidden md:flex flex-1 max-w-md">
               <div className="relative w-full">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
                   type="search"
                   placeholder="Search fresh produce..."
                   className="pl-9"
+                  value={searchVal}
+                  onChange={(e) => setSearchVal(e.target.value)}
                   data-testid="input-search"
                 />
               </div>
-            </div>
+            </form>
           )}
 
           <div className="flex items-center gap-2">
@@ -62,6 +79,20 @@ export default function Header({ cartCount = 0, showSearch = true }: HeaderProps
                 )}
               </Button>
             </Link>
+            {user && (
+              <>
+                <Link href="/chat">
+                  <Button variant="ghost" size="sm" className="hidden md:inline-flex text-sm">
+                    Chat
+                  </Button>
+                </Link>
+                <Link href="/settings">
+                  <Button variant="ghost" size="sm" className="hidden md:inline-flex text-sm mr-2">
+                    Settings
+                  </Button>
+                </Link>
+              </>
+            )}
             {user ? (
               <Button
                 variant="ghost"

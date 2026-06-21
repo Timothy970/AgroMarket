@@ -31,6 +31,9 @@ import {
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/store/authStore";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { productsApi, ordersApi } from "@/lib/api";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function SellerDashboard() {
   const [activeView, setActiveView] = useState("overview");
@@ -49,36 +52,54 @@ export default function SellerDashboard() {
     }, 2000);
     return null;
   }
-  const stats = [
-    { label: "Total Earnings", value: "KES 45,600", icon: DollarSign, color: "text-primary" },
-    { label: "Pending Orders", value: "12", icon: Clock, color: "text-chart-2" },
-    { label: "Active Products", value: "8", icon: Package, color: "text-chart-4" },
-    { label: "Total Sales", value: "156", icon: ShoppingBag, color: "text-chart-1" },
-  ];
+  const queryClient = useQueryClient();
 
-  const products = [
-    {
-      id: "1",
-      name: "Organic Tomatoes",
-      status: "approved" as const,
-      price: 200,
-      stock: 500,
+  const { data: productsResponse, isLoading: productsLoading } = useQuery({
+    queryKey: ['seller-products', user?.id],
+    queryFn: () => productsApi.getAll({ sellerId: user?.id }),
+    enabled: !!user?.id,
+  });
+  const products = productsResponse?.data || [];
+
+  const { data: ordersResponse, isLoading: ordersLoading } = useQuery({
+    queryKey: ['seller-orders', user?.id],
+    queryFn: () => ordersApi.getAll('seller'),
+    enabled: !!user?.id,
+  });
+  const orders = ordersResponse?.data || [];
+
+  const updateStatusMutation = useMutation({
+    mutationFn: ({ orderId, status }: { orderId: string; status: any }) =>
+      ordersApi.updateStatus(orderId, status),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['seller-orders'] });
+      toast({
+        title: "Success",
+        description: "Order status updated successfully",
+      });
     },
-    {
-      id: "2",
-      name: "Fresh Lettuce",
-      status: "pending" as const,
-      price: 150,
-      stock: 300,
-    },
-    {
-      id: "3",
-      name: "Sweet Mangoes",
-      status: "rejected" as const,
-      price: 180,
-      stock: 0,
-      feedback: "Images need to be clearer. Please provide high-quality product photos.",
-    },
+    onError: (err: any) => {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to update order status",
+        variant: "destructive",
+      });
+    }
+  });
+
+  const totalEarnings = orders
+    .filter(o => o.status === 'delivered')
+    .reduce((sum, o) => sum + Number(o.totalAmount), 0);
+
+  const pendingOrders = orders.filter(o => ['placed', 'approved', 'packed', 'shipped'].includes(o.status)).length;
+  const activeProductsCount = products.filter(p => p.status === 'approved').length;
+  const totalSales = orders.length;
+
+  const stats = [
+    { label: "Total Earnings", value: `KES ${totalEarnings.toLocaleString()}`, icon: DollarSign, color: "text-primary" },
+    { label: "Pending Orders", value: pendingOrders.toString(), icon: Clock, color: "text-chart-2" },
+    { label: "Active Products", value: activeProductsCount.toString(), icon: Package, color: "text-chart-4" },
+    { label: "Total Sales", value: totalSales.toString(), icon: ShoppingBag, color: "text-chart-1" },
   ];
 
   const getStatusBadge = (status: string) => {
@@ -212,15 +233,21 @@ export default function SellerDashboard() {
                   </Button>
                 </div>
                 <div className="space-y-4">
-                  {products.slice(0, 3).map((product) => (
-                    <div key={product.id} className="flex items-center justify-between border-b pb-4 last:border-0 last:pb-0">
-                      <div>
-                        <div className="font-medium">{product.name}</div>
-                        <div className="text-sm text-muted-foreground">Stock: {product.stock} kg</div>
+                  {productsLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading products...</p>
+                  ) : products.length > 0 ? (
+                    products.slice(0, 3).map((product) => (
+                      <div key={product.id} className="flex items-center justify-between border-b pb-4 last:border-0 last:pb-0">
+                        <div>
+                          <div className="font-medium">{product.name}</div>
+                          <div className="text-sm text-muted-foreground">Stock: {product.availableQuantity} {product.smallUnit}</div>
+                        </div>
+                        {getStatusBadge(product.status)}
                       </div>
-                      {getStatusBadge(product.status)}
-                    </div>
-                  ))}
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No products added yet</p>
+                  )}
                 </div>
               </Card>
             </div>
@@ -236,35 +263,41 @@ export default function SellerDashboard() {
               </Button>
             </div>
             <div className="grid gap-4">
-              {products.map((product) => (
-                <Card key={product.id} className="p-6">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <h3 className="font-semibold text-lg">{product.name}</h3>
-                        {getStatusBadge(product.status)}
-                      </div>
-                      <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-                        <span>Price: KES {product.price}/kg</span>
-                        <span>Stock: {product.stock} kg</span>
-                      </div>
-                      {product.feedback && (
-                        <div className="mt-3 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
-                          <p className="text-sm text-destructive-foreground">
-                            <span className="font-semibold">Feedback:</span> {product.feedback}
-                          </p>
+              {productsLoading ? (
+                <p className="text-muted-foreground">Loading products...</p>
+              ) : products.length > 0 ? (
+                products.map((product) => (
+                  <Card key={product.id} className="p-6">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <h3 className="font-semibold text-lg">{product.name}</h3>
+                          {getStatusBadge(product.status)}
                         </div>
-                      )}
+                        <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                          <span>Price: KES {Number(product.smallPrice)}/{product.smallUnit}</span>
+                          <span>Stock: {product.availableQuantity} {product.smallUnit}</span>
+                          {product.bulkPrice && (
+                            <span>Bulk Price: KES {Number(product.bulkPrice)}/{product.bulkUnit}</span>
+                          )}
+                        </div>
+                        {product.rejectionReason && (
+                          <div className="mt-3 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+                            <p className="text-sm text-destructive-foreground">
+                              <span className="font-semibold">Feedback:</span> {product.rejectionReason}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => setLocation(`/seller/edit-product/${product.id}`)} disabled>Edit</Button>
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm">Edit</Button>
-                      {product.status === "approved" && (
-                        <Button variant="ghost" size="sm">Deactivate</Button>
-                      )}
-                    </div>
-                  </div>
-                </Card>
-              ))}
+                  </Card>
+                ))
+              ) : (
+                <p className="text-muted-foreground">You haven't listed any crops yet.</p>
+              )}
             </div>
           </>
         )}
@@ -272,13 +305,70 @@ export default function SellerDashboard() {
         {activeView === "orders" && (
           <>
             <h1 className="text-2xl font-bold tracking-tight">Orders</h1>
-            <div className="flex items-center justify-center h-64 border rounded-lg border-dashed">
-              <div className="text-center">
-                <ShoppingBag className="mx-auto h-10 w-10 text-muted-foreground" />
-                <h3 className="mt-4 text-lg font-semibold">No orders yet</h3>
-                <p className="text-muted-foreground">When you receive orders, they will appear here.</p>
+            {ordersLoading ? (
+              <p className="text-muted-foreground">Loading orders...</p>
+            ) : orders.length > 0 ? (
+              <div className="grid gap-4">
+                {orders.map((order) => (
+                  <Card key={order.id} className="p-6">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="space-y-1.5 flex-1">
+                        <div className="flex items-center gap-3">
+                          <h3 className="font-semibold text-lg">Order #{order.id.slice(0, 8)}</h3>
+                          <Badge>{order.status.toUpperCase()}</Badge>
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          <p><span className="font-medium text-foreground">Delivery Address:</span> {order.deliveryAddress}</p>
+                          <p><span className="font-medium text-foreground">Date:</span> {order.createdAt ? new Date(order.createdAt).toLocaleDateString() : 'N/A'}</p>
+                          <div className="mt-2 pt-2 border-t border-border">
+                            <p className="font-semibold text-foreground mb-1">Items:</p>
+                            <ul className="list-disc pl-5 space-y-1">
+                              {order.items.map((item: any, idx: number) => (
+                                <li key={idx}>
+                                  {item.productName} - {item.quantity} {item.unit} (KES {Number(item.subtotal).toLocaleString()})
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex flex-col sm:flex-row items-start md:items-center gap-4">
+                        <div className="text-right">
+                          <div className="text-sm text-muted-foreground">Total Payout</div>
+                          <div className="font-bold text-lg text-primary">KES {Number(order.totalAmount).toLocaleString()}</div>
+                        </div>
+                        <div className="w-full sm:w-auto">
+                          <Select
+                            value={order.status}
+                            onValueChange={(val: any) => updateStatusMutation.mutate({ orderId: order.id, status: val })}
+                          >
+                            <SelectTrigger className="w-[180px]">
+                              <SelectValue placeholder="Update Status" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="placed">Placed</SelectItem>
+                              <SelectItem value="approved">Approved</SelectItem>
+                              <SelectItem value="packed">Packed</SelectItem>
+                              <SelectItem value="shipped">Shipped</SelectItem>
+                              <SelectItem value="delivered">Delivered</SelectItem>
+                              <SelectItem value="cancelled">Cancelled</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
               </div>
-            </div>
+            ) : (
+              <div className="flex items-center justify-center h-64 border rounded-lg border-dashed">
+                <div className="text-center">
+                  <ShoppingBag className="mx-auto h-10 w-10 text-muted-foreground" />
+                  <h3 className="mt-4 text-lg font-semibold">No orders yet</h3>
+                  <p className="text-muted-foreground">When you receive orders, they will appear here.</p>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

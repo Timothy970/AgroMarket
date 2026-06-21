@@ -18,6 +18,8 @@ import Products from "@/pages/products";
 import Login from "@/pages/auth/Login";
 import Register from "@/pages/auth/Register";
 import VerifyOtp from "@/pages/auth/VerifyOtp";
+import Settings from "@/pages/Settings";
+import Chat from "@/pages/Chat";
 
 function Router() {
   // const { isAuthenticated, isLoading } = useAuth();
@@ -42,6 +44,8 @@ function Router() {
         <Route path="/orders/:id" component={OrderTracking} />
         {/* path to products of a specific category */}
         <Route path="/category/:id" component={CategoryProducts} />
+        <Route path="/settings" component={Settings} />
+        <Route path="/chat" component={Chat} />
       </>
       {/* )} */}
       <Route component={NotFound} />

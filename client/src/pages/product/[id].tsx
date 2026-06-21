@@ -10,9 +10,11 @@ import { Link, useRoute } from "wouter";
 import Footer from "@/components/footer";
 import ProductCard from "@/components/ProductCard";
 import { useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
-import { productsApi } from "@/lib/api";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { productsApi, cartApi } from "@/lib/api";
 import { Product } from "@shared/schema";
+import { useAuthStore } from "@/store/authStore";
+import { useToast } from "@/hooks/use-toast";
 
 export default function ProductDetail() {
     const [location, setLocation] = useLocation();
@@ -20,6 +22,18 @@ export default function ProductDetail() {
     const [quantity, setQuantity] = useState(1);
     const [match, params] = useRoute("/product/:id");
     const productId = match ? params.id : null;
+
+    const { token, isAuthenticated } = useAuthStore();
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
+
+    const { data: cartResponse } = useQuery({
+        queryKey: ['cart'],
+        queryFn: () => cartApi.getItems(token!),
+        enabled: isAuthenticated,
+    });
+    const cartCount = cartResponse?.data?.items?.length || 0;
+
     const { data: productResponse, isLoading: productLoading } = useQuery({
         queryKey: ['product', productId],
         queryFn: () => productsApi.getById(productId!),
@@ -31,8 +45,74 @@ export default function ProductDetail() {
         queryFn: () => productsApi.getAll(),
     });
     const featuredProducts = featuredProductsResponse?.data || [];
+
+    // Add to cart mutation
+    const addToCartMutation = useMutation({
+        mutationFn: async () => {
+            if (!isAuthenticated) {
+                toast({
+                    title: "Authentication Required",
+                    description: "Please log in to add items to your cart.",
+                    variant: "destructive",
+                });
+                setLocation("/login");
+                return;
+            }
+            return cartApi.addItem({
+                productId: product!.id,
+                quantity,
+                purchaseMode: mode,
+            }, token!);
+        },
+        onSuccess: (response) => {
+            if (!response) return;
+            if (response.status_code !== 200) {
+                toast({
+                    title: "Error",
+                    description: response?.message || "Failed to add product to cart.",
+                    variant: "destructive",
+                });
+                return;
+            }
+            queryClient.invalidateQueries({ queryKey: ['cart'] });
+            toast({
+                title: "Success",
+                description: `${product?.name} added to cart successfully.`,
+            });
+        },
+        onError: (error: any) => {
+            toast({
+                title: "Error",
+                description: error.message || "Failed to add product to cart.",
+                variant: "destructive",
+            });
+        }
+    });
+
+    if (productLoading) {
+        return (
+            <div className="min-h-screen bg-background pb-20 md:pb-0 flex flex-col justify-between">
+                <Header cartCount={cartCount} />
+                <div className="flex-1 flex items-center justify-center py-20">
+                    <p className="text-muted-foreground">Loading product details...</p>
+                </div>
+                <Footer />
+                <MobileNav cartCount={cartCount} />
+            </div>
+        );
+    }
+
     if (!product) {
-        return <div>Product not found</div>;
+        return (
+            <div className="min-h-screen bg-background pb-20 md:pb-0 flex flex-col justify-between">
+                <Header cartCount={cartCount} />
+                <div className="flex-1 flex items-center justify-center py-20">
+                    <p className="text-muted-foreground">Product not found</p>
+                </div>
+                <Footer />
+                <MobileNav cartCount={cartCount} />
+            </div>
+        );
     }
 
     const currentPrice = mode === "small" ? product.smallPrice : product.bulkPrice;
@@ -41,7 +121,7 @@ export default function ProductDetail() {
 
     return (
         <div className="min-h-screen bg-background pb-20 md:pb-0">
-            <Header cartCount={2} />
+            <Header cartCount={cartCount} />
 
             <div className="max-w-7xl mx-auto px-4 py-6">
                 <Link href="/">
@@ -84,7 +164,7 @@ export default function ProductDetail() {
                             <div className="flex items-center gap-4 text-sm">
                                 <div className="flex items-center gap-1">
                                     <Star className="w-4 h-4 fill-primary text-primary" />
-                                    <span className="font-semibold">4</span>
+                                    <span className="font-semibold">4.8</span>
                                     <span className="text-muted-foreground">(7 reviews)</span>
                                 </div>
                             </div>
@@ -95,10 +175,10 @@ export default function ProductDetail() {
                                         {product.sellerId.charAt(0)}
                                     </div>
                                     <div>
-                                        <div className="font-semibold text-sm">{product.sellerId}</div>
+                                        <div className="font-semibold text-sm">Farmer ID: {product.sellerId.slice(0, 8)}</div>
                                         <div className="flex items-center gap-1 text-xs text-muted-foreground">
                                             <MapPin className="w-3 h-3" />
-                                            {product.location}
+                                            {product.location || "Nairobi, Kenya"}
                                         </div>
                                     </div>
                                 </div>
@@ -122,15 +202,17 @@ export default function ProductDetail() {
                                 <p className="text-sm">
                                     <span className="font-semibold">Minimum order:</span> {product.minBulkQuantity} {product.bulkUnit}
                                 </p>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="mt-3 w-full"
-                                    data-testid="button-contact-seller"
-                                >
-                                    <MessageCircle className="w-4 h-4 mr-2" />
-                                    Contact Seller for Negotiation
-                                </Button>
+                                <Link href={`/chat?userId=${product.sellerId}&name=Farmer%20${product.sellerId.slice(0, 8)}`}>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="mt-3 w-full"
+                                        data-testid="button-contact-seller"
+                                    >
+                                        <MessageCircle className="w-4 h-4 mr-2" />
+                                        Contact Seller for Negotiation
+                                    </Button>
+                                </Link>
                             </div>
                         )}
 
@@ -172,7 +254,7 @@ export default function ProductDetail() {
                         <div className="p-4 rounded-lg bg-muted/50 space-y-2">
                             <div className="flex justify-between text-sm">
                                 <span className="text-muted-foreground">Price per {currentUnit}</span>
-                                <span className="font-semibold">KES {currentPrice ? currentPrice.toLocaleString() : ""}</span>
+                                <span className="font-semibold">KES {currentPrice ? Number(currentPrice).toLocaleString() : ""}</span>
                             </div>
                             <div className="flex justify-between text-sm">
                                 <span className="text-muted-foreground">Quantity</span>
@@ -189,11 +271,12 @@ export default function ProductDetail() {
                         <Button
                             size="lg"
                             className="w-full"
-                            onClick={() => console.log('Added to cart:', { product: product.name, mode, quantity, subtotal })}
+                            onClick={() => addToCartMutation.mutate()}
+                            disabled={addToCartMutation.isPending}
                             data-testid="button-add-to-cart"
                         >
                             <ShoppingCart className="w-5 h-5 mr-2" />
-                            Add to Cart
+                            {addToCartMutation.isPending ? "Adding..." : "Add to Cart"}
                         </Button>
 
                         <div>
@@ -204,11 +287,13 @@ export default function ProductDetail() {
                         <div className="grid grid-cols-2 gap-4 p-4 rounded-lg bg-muted/30">
                             <div>
                                 <div className="text-sm text-muted-foreground">Available</div>
-                                <div className="font-semibold">12 kg</div>
+                                <div className="font-semibold">{product.availableQuantity} kg</div>
                             </div>
                             <div>
                                 <div className="text-sm text-muted-foreground">Harvest Date</div>
-                                <div className="font-semibold">January 1, 2024</div>
+                                <div className="font-semibold">
+                                    {product.harvestDate ? new Date(product.harvestDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : "Not specified"}
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -232,7 +317,7 @@ export default function ProductDetail() {
                 </div>
             </div>
             <Footer />
-            <MobileNav cartCount={2} />
+            <MobileNav cartCount={cartCount} />
         </div>
     );
 }

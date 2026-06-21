@@ -111,12 +111,6 @@ export const orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   buyerId: varchar("buyer_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   sellerId: varchar("seller_id").notNull().references(() => users.id),
-  productId: varchar("product_id").notNull().references(() => products.id),
-  productName: text("product_name").notNull(),
-  quantity: integer("quantity").notNull(),
-  purchaseMode: purchaseModeEnum("purchase_mode").notNull(),
-  unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
-  unit: varchar("unit").notNull(),
   subtotal: decimal("subtotal", { precision: 10, scale: 2 }).notNull(),
   deliveryFee: decimal("delivery_fee", { precision: 10, scale: 2 }).notNull().default("500"),
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
@@ -140,6 +134,22 @@ export const orders = pgTable("orders", {
   index("orders_status_idx").on(table.status),
 ]);
 
+export const orderItems = pgTable("order_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  productId: varchar("product_id").notNull().references(() => products.id),
+  productName: text("product_name").notNull(),
+  quantity: integer("quantity").notNull(),
+  purchaseMode: purchaseModeEnum("purchase_mode").notNull(),
+  unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
+  unit: varchar("unit").notNull(),
+  subtotal: decimal("subtotal", { precision: 10, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("order_items_order_idx").on(table.orderId),
+]);
+
 export const otpRequests = pgTable("otp_requests", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: varchar("email").notNull(),
@@ -148,6 +158,18 @@ export const otpRequests = pgTable("otp_requests", {
   verified: boolean("verified").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+export const messages = pgTable("messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  senderId: varchar("sender_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  receiverId: varchar("receiver_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  productId: varchar("product_id").references(() => products.id, { onDelete: "cascade" }),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("messages_sender_idx").on(table.senderId),
+  index("messages_receiver_idx").on(table.receiverId),
+]);
 
 // Relations
 export const categoriesRelations = relations(categories, ({ many }) => ({
@@ -159,6 +181,8 @@ export const usersRelations = relations(users, ({ many }) => ({
   cartItems: many(cartItems),
   ordersAsBuyer: many(orders, { relationName: "buyer" }),
   ordersAsSeller: many(orders, { relationName: "seller" }),
+  sentMessages: many(messages, { relationName: "sender" }),
+  receivedMessages: many(messages, { relationName: "receiver" }),
 }));
 
 export const productsRelations = relations(products, ({ one, many }) => ({
@@ -172,7 +196,7 @@ export const productsRelations = relations(products, ({ one, many }) => ({
     references: [categories.id],
   }),
   cartItems: many(cartItems),
-  orders: many(orders),
+  orderItems: many(orderItems),
 }));
 
 export const cartItemsRelations = relations(cartItems, ({ one }) => ({
@@ -186,7 +210,7 @@ export const cartItemsRelations = relations(cartItems, ({ one }) => ({
   }),
 }));
 
-export const ordersRelations = relations(orders, ({ one }) => ({
+export const ordersRelations = relations(orders, ({ one, many }) => ({
   buyer: one(users, {
     fields: [orders.buyerId],
     references: [users.id],
@@ -197,8 +221,33 @@ export const ordersRelations = relations(orders, ({ one }) => ({
     references: [users.id],
     relationName: "seller",
   }),
+  items: many(orderItems),
+}));
+
+export const orderItemsRelations = relations(orderItems, ({ one }) => ({
+  order: one(orders, {
+    fields: [orderItems.orderId],
+    references: [orders.id],
+  }),
   product: one(products, {
-    fields: [orders.productId],
+    fields: [orderItems.productId],
+    references: [products.id],
+  }),
+}));
+
+export const messagesRelations = relations(messages, ({ one }) => ({
+  sender: one(users, {
+    fields: [messages.senderId],
+    references: [users.id],
+    relationName: "sender",
+  }),
+  receiver: one(users, {
+    fields: [messages.receiverId],
+    references: [users.id],
+    relationName: "receiver",
+  }),
+  product: one(products, {
+    fields: [messages.productId],
     references: [products.id],
   }),
 }));
@@ -246,6 +295,17 @@ export const insertOrderSchema = createInsertSchema(orders).omit({
   updatedAt: true,
 });
 
+export const insertOrderItemSchema = createInsertSchema(orderItems).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertMessageSchema = createInsertSchema(messages).omit({
+  id: true,
+  createdAt: true,
+});
+
 // Types
 export type InsertCategory = z.infer<typeof insertCategorySchema>;
 export type UpdateCategory = z.infer<typeof updateCategorySchema>;
@@ -259,3 +319,7 @@ export type InsertCartItem = z.infer<typeof insertCartItemSchema>;
 export type CartItem = typeof cartItems.$inferSelect;
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
 export type Order = typeof orders.$inferSelect;
+export type InsertOrderItem = z.infer<typeof insertOrderItemSchema>;
+export type OrderItem = typeof orderItems.$inferSelect;
+export type InsertMessage = z.infer<typeof insertMessageSchema>;
+export type Message = typeof messages.$inferSelect;

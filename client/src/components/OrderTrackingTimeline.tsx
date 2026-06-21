@@ -6,7 +6,8 @@ export type OrderStatus =
   | "packed" 
   | "shipped" 
   | "awaiting_payment" 
-  | "delivered";
+  | "delivered"
+  | "cancelled";
 
 interface OrderTrackingTimelineProps {
   currentStatus: OrderStatus;

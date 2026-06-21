@@ -41,10 +41,11 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 import { useLocation } from "wouter";
-import tomatoesImg from "@assets/generated_images/Sample_product_tomatoes_cc18b3ed.png";
-import lettuceImg from "@assets/generated_images/Sample_product_lettuce_e8e9e93a.png";
 import { useAuthStore } from "@/store/authStore";
 import { useToast } from "@/hooks/use-toast";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { productsApi, ordersApi } from "@/lib/api";
+import api from "@/lib/axios";
 
 export default function AdminDashboard() {
   const [activeView, setActiveView] = useState("overview");
@@ -52,40 +53,89 @@ export default function AdminDashboard() {
   const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const { user, token, isAuthenticated } = useAuthStore();
   const { toast } = useToast();
-  const stats = [
-    { label: "Total Sales", value: "KES 1.2M", icon: DollarSign, color: "text-primary" },
-    { label: "New Sellers", value: "24", icon: Users, color: "text-chart-1" },
-    { label: "Pending Approvals", value: "8", icon: Clock, color: "text-chart-2" },
-    { label: "Total Orders", value: "456", icon: ShoppingBag, color: "text-chart-4" },
-  ];
+  
+  const queryClient = useQueryClient();
 
-  const pendingProducts = [
-    {
-      id: "1",
-      name: "Organic Tomatoes",
-      seller: "John's Farm",
-      category: "Vegetables",
-      smallPrice: 200,
-      bulkPrice: 4500,
-      submittedDate: "2024-10-22",
-      images: [tomatoesImg],
-      description: "Fresh organic tomatoes grown with care. Perfect for salads and cooking.",
-      quantity: 500,
+  const { data: pendingProductsResponse, isLoading: productsLoading } = useQuery({
+    queryKey: ['admin-pending-products'],
+    queryFn: () => productsApi.getAll({ status: 'pending' }),
+    enabled: isAuthenticated && user?.role === 'admin',
+  });
+  const pendingProducts = pendingProductsResponse?.data || [];
+
+  const { data: ordersResponse } = useQuery({
+    queryKey: ['admin-all-orders'],
+    queryFn: () => ordersApi.getAll(),
+    enabled: isAuthenticated && user?.role === 'admin',
+  });
+  const allOrders = ordersResponse?.data || [];
+
+  const { data: usersResponse } = useQuery({
+    queryKey: ['admin-all-users'],
+    queryFn: () => api.get('/api/admin/users').then(res => res.data),
+    enabled: isAuthenticated && user?.role === 'admin',
+  });
+  const allUsers = usersResponse?.data || [];
+
+  const approveMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await api.post(`/api/admin/products/${id}/approve`);
+      return response.data;
     },
-    {
-      id: "2",
-      name: "Fresh Lettuce",
-      seller: "Green Valley Farm",
-      category: "Vegetables",
-      smallPrice: 150,
-      bulkPrice: 3200,
-      submittedDate: "2024-10-23",
-      images: [lettuceImg],
-      description: "Crisp and fresh lettuce, harvested daily.",
-      quantity: 300,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-pending-products'] });
+      toast({
+        title: "Approved",
+        description: "Product approved successfully",
+      });
     },
+    onError: (err: any) => {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to approve product",
+        variant: "destructive",
+      });
+    }
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
+      const response = await api.post(`/api/admin/products/${id}/reject`, { reason });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-pending-products'] });
+      toast({
+        title: "Rejected",
+        description: "Product rejected successfully",
+      });
+      setRejectDialogOpen(false);
+      setRejectionReason("");
+      setSelectedProductId(null);
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to reject product",
+        variant: "destructive",
+      });
+    }
+  });
+
+  const totalSalesAmount = allOrders
+    .filter(o => o.status === 'delivered')
+    .reduce((sum, o) => sum + Number(o.totalAmount), 0);
+
+  const newSellersCount = allUsers.filter((u: any) => u.role === 'seller').length;
+
+  const stats = [
+    { label: "Total Sales", value: `KES ${totalSalesAmount.toLocaleString()}`, icon: DollarSign, color: "text-primary" },
+    { label: "New Sellers", value: newSellersCount.toString(), icon: Users, color: "text-chart-1" },
+    { label: "Pending Approvals", value: pendingProducts.length.toString(), icon: Clock, color: "text-chart-2" },
+    { label: "Total Orders", value: allOrders.length.toString(), icon: ShoppingBag, color: "text-chart-4" },
   ];
 
   if (!isAuthenticated || user?.role !== "admin") {
@@ -216,15 +266,21 @@ export default function AdminDashboard() {
                   </Button>
                 </div>
                 <div className="space-y-4">
-                  {pendingProducts.slice(0, 3).map((product) => (
-                    <div key={product.id} className="flex items-center justify-between border-b pb-4 last:border-0 last:pb-0">
-                      <div>
-                        <div className="font-medium">{product.name}</div>
-                        <div className="text-sm text-muted-foreground">Seller: {product.seller}</div>
+                  {productsLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading pending products...</p>
+                  ) : pendingProducts.length > 0 ? (
+                    pendingProducts.slice(0, 3).map((product) => (
+                      <div key={product.id} className="flex items-center justify-between border-b pb-4 last:border-0 last:pb-0">
+                        <div>
+                          <div className="font-medium">{product.name}</div>
+                          <div className="text-sm text-muted-foreground">Seller: {product.sellerId.slice(0, 8)}</div>
+                        </div>
+                        <Badge variant="secondary">Pending</Badge>
                       </div>
-                      <Badge variant="secondary">Pending</Badge>
-                    </div>
-                  ))}
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No pending approvals</p>
+                  )}
                 </div>
               </Card>
             </div>
@@ -240,108 +296,155 @@ export default function AdminDashboard() {
               </Badge>
             </div>
             <div className="space-y-4">
-              {pendingProducts.map((product) => {
-                const isExpanded = expandedProduct === product.id;
-                return (
-                  <Card key={product.id} className="overflow-hidden">
-                    <div
-                      className="p-6 cursor-pointer hover:bg-muted/50 transition-colors"
-                      onClick={() => setExpandedProduct(isExpanded ? null : product.id)}
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex gap-4 flex-1">
-                          <img
-                            src={product.images[0]}
-                            alt={product.name}
-                            className="w-20 h-20 rounded-lg object-cover flex-shrink-0"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <h3 className="font-semibold text-lg mb-1">
-                              {product.name}
-                            </h3>
-                            <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-                              <span>By: {product.seller}</span>
-                              <span>Category: {product.category}</span>
-                              <span>Submitted: {product.submittedDate}</span>
-                            </div>
-                            <div className="flex gap-3 mt-2">
-                              <Badge variant="secondary">Small: KES {product.smallPrice}/kg</Badge>
-                              <Badge variant="secondary">Bulk: KES {product.bulkPrice}</Badge>
-                            </div>
-                          </div>
-                        </div>
-                        <Button variant="ghost" size="icon">
-                          {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                        </Button>
-                      </div>
-                    </div>
-
-                    {isExpanded && (
-                      <div className="px-6 pb-6 space-y-4 border-t pt-4">
-                        <div className="grid md:grid-cols-2 gap-6">
-                          <div>
-                            <h4 className="font-semibold mb-2">Description</h4>
-                            <p className="text-sm text-muted-foreground">{product.description}</p>
-                          </div>
-                          <div>
-                            <h4 className="font-semibold mb-2">Details</h4>
-                            <div className="space-y-1 text-sm">
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">Available Quantity:</span>
-                                <span className="font-medium">{product.quantity} kg</span>
+              {productsLoading ? (
+                <p className="text-muted-foreground">Loading pending crop requests...</p>
+              ) : pendingProducts.length > 0 ? (
+                pendingProducts.map((product) => {
+                  const isExpanded = expandedProduct === product.id;
+                  return (
+                    <Card key={product.id} className="overflow-hidden">
+                      <div
+                        className="p-6 cursor-pointer hover:bg-muted/50 transition-colors"
+                        onClick={() => setExpandedProduct(isExpanded ? null : product.id)}
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex gap-4 flex-1">
+                            {product.images && product.images[0] && (
+                              <img
+                                src={product.images[0]}
+                                alt={product.name}
+                                className="w-20 h-20 rounded-lg object-cover flex-shrink-0"
+                              />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <h3 className="font-semibold text-lg mb-1">
+                                {product.name}
+                              </h3>
+                              <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+                                <span>Seller ID: {product.sellerId.slice(0, 8)}</span>
+                                <span>Submitted: {product.createdAt ? new Date(product.createdAt).toLocaleDateString() : 'N/A'}</span>
                               </div>
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">Small Price:</span>
-                                <span className="font-medium">KES {product.smallPrice}/kg</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">Bulk Price:</span>
-                                <span className="font-medium">KES {product.bulkPrice}</span>
+                              <div className="flex gap-3 mt-2">
+                                <Badge variant="secondary">Small: KES {Number(product.smallPrice)}/{product.smallUnit}</Badge>
+                                {product.bulkPrice && (
+                                  <Badge variant="secondary">Bulk: KES {Number(product.bulkPrice)}/{product.bulkUnit}</Badge>
+                                )}
                               </div>
                             </div>
                           </div>
-                        </div>
-
-                        <div className="flex gap-3 pt-4">
-                          <Button
-                            className="flex-1"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              console.log(`Approved product: ${product.name}`);
-                            }}
-                          >
-                            Approve
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            className="flex-1"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setRejectDialogOpen(true);
-                            }}
-                          >
-                            Reject
+                          <Button variant="ghost" size="icon">
+                            {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                           </Button>
                         </div>
                       </div>
-                    )}
-                  </Card>
-                );
-              })}
+
+                      {isExpanded && (
+                        <div className="px-6 pb-6 space-y-4 border-t pt-4">
+                          <div className="grid md:grid-cols-2 gap-6">
+                            <div>
+                              <h4 className="font-semibold mb-2">Description</h4>
+                              <p className="text-sm text-muted-foreground">{product.description}</p>
+                            </div>
+                            <div>
+                              <h4 className="font-semibold mb-2">Details</h4>
+                              <div className="space-y-1 text-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Available Quantity:</span>
+                                  <span className="font-medium">{product.availableQuantity} kg</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Small Price:</span>
+                                  <span className="font-medium">KES {Number(product.smallPrice)}/{product.smallUnit}</span>
+                                </div>
+                                {product.bulkPrice && (
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Bulk Price:</span>
+                                    <span className="font-medium">KES {Number(product.bulkPrice)}/{product.bulkUnit}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex gap-3 pt-4">
+                            <Button
+                              className="flex-1"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                approveMutation.mutate(product.id);
+                              }}
+                              disabled={approveMutation.isPending}
+                            >
+                              {approveMutation.isPending && approveMutation.variables === product.id ? "Approving..." : "Approve"}
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              className="flex-1"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedProductId(product.id);
+                                setRejectDialogOpen(true);
+                              }}
+                            >
+                              Reject
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })
+              ) : (
+                <p className="text-muted-foreground">No pending product approvals.</p>
+              )}
             </div>
           </>
         )}
 
         {activeView === "users" && (
           <>
-            <h1 className="text-2xl font-bold tracking-tight">Users</h1>
-            <div className="flex items-center justify-center h-64 border rounded-lg border-dashed">
-              <div className="text-center">
-                <Users className="mx-auto h-10 w-10 text-muted-foreground" />
-                <h3 className="mt-4 text-lg font-semibold">User Management</h3>
-                <p className="text-muted-foreground">User management features coming soon.</p>
+            <h1 className="text-2xl font-bold tracking-tight mb-4">Users</h1>
+            {allUsers && allUsers.length > 0 ? (
+              <div className="border rounded-lg overflow-hidden bg-card">
+                <div className="relative w-full overflow-auto">
+                  <table className="w-full caption-bottom text-sm">
+                    <thead>
+                      <tr className="border-b transition-colors hover:bg-muted/50">
+                        <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Name</th>
+                        <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Email</th>
+                        <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Role</th>
+                        <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Registered</th>
+                      </tr>
+                    </thead>
+                    <tbody className="[&_tr:last-child]:border-0">
+                      {allUsers.map((u: any) => (
+                        <tr key={u.id} className="border-b transition-colors hover:bg-muted/50">
+                          <td className="p-4 align-middle font-medium">
+                            {u.firstName || u.lastName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : "N/A"}
+                          </td>
+                          <td className="p-4 align-middle">{u.email}</td>
+                          <td className="p-4 align-middle">
+                            <Badge variant={u.role === 'admin' ? 'destructive' : u.role === 'seller' ? 'default' : 'secondary'}>
+                              {u.role.toUpperCase()}
+                            </Badge>
+                          </td>
+                          <td className="p-4 align-middle">
+                            {new Date(u.createdAt).toLocaleDateString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex items-center justify-center h-64 border rounded-lg border-dashed">
+                <div className="text-center">
+                  <Users className="mx-auto h-10 w-10 text-muted-foreground" />
+                  <h3 className="mt-4 text-lg font-semibold">No users registered</h3>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -378,13 +481,13 @@ export default function AdminDashboard() {
             <Button
               variant="destructive"
               onClick={() => {
-                console.log('Product rejected with reason:', rejectionReason);
-                setRejectDialogOpen(false);
-                setRejectionReason("");
+                if (selectedProductId) {
+                  rejectMutation.mutate({ id: selectedProductId, reason: rejectionReason });
+                }
               }}
-              disabled={!rejectionReason.trim()}
+              disabled={!rejectionReason.trim() || rejectMutation.isPending}
             >
-              Confirm Rejection
+              {rejectMutation.isPending ? "Confirming..." : "Confirm Rejection"}
             </Button>
           </DialogFooter>
         </DialogContent>
