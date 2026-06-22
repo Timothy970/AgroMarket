@@ -96,12 +96,31 @@ shared/
     npm install
     ```
 
-2.  **Run Development Server:**
+2.  **Configure Environment Variables:**
+    Create a `.env` file in the root directory and set the `DATABASE_URL` (and other credentials if needed).
+
+3.  **Run Database Migrations:**
+    To apply existing migrations to the database, run:
+    ```bash
+    npm run db:migrate
+    ```
+    For local development, you can also push schema changes directly without generating migrations:
+    ```bash
+    npm run db:push
+    ```
+
+4.  **Run Development Server:**
+    To launch both the backend API server (running standalone on port `8010` or as configured in `.env`) and the Vite frontend dev server (running standalone on port `5173` with auto-proxying) concurrently:
     ```bash
     npm run dev
     ```
+    Alternatively, you can run them individually in separate terminal sessions:
+    *   **Backend API Server:** `npm run dev:server`
+    *   **Frontend Client:** `npm run dev:client`
+    
+    Always access and test the application at **`http://localhost:5173`** in development.
 
-3.  **Build for Production:**
+5.  **Build for Production:**
     ```bash
     npm run build
     ```

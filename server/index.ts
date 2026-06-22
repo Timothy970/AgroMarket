@@ -68,7 +68,11 @@ app.use((req, res, next) => {
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
   if (app.get("env") === "development") {
-    await setupVite(app, server);
+    if (process.env.STANDALONE_API === "true") {
+      log("API running in standalone mode (no integrated Vite middleware)");
+    } else {
+      await setupVite(app, server);
+    }
   } else {
     serveStatic(app);
   }
