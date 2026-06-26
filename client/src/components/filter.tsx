@@ -1,167 +1,99 @@
-import { categoriesApi } from '@/lib/api';
+import React from 'react';
 import { Category } from '@shared/schema';
-import { useQuery } from '@tanstack/react-query';
-import React, { useState } from 'react';
+import { Slider } from "@/components/ui/slider";
 
-const Filters = () => {
-    const [selectedCategories, setSelectedCategories] = useState<string[]>(['Vegetables']);
-    const [priceRange, setPriceRange] = useState([0, 100]);
-    const [selectedSellerTypes, setSelectedSellerTypes] = useState<string[]>([]);
-    const [selectedAvailability, setSelectedAvailability] = useState<string[]>([]);
-    const [selectedCertifications, setSelectedCertifications] = useState<string[]>(['Organic Certified']);
+interface FilterProps {
+    selectedCategories?: string[];
+    onCategoryChange?: (categoryIds: string[]) => void;
+    priceRange: [number, number];
+    onPriceChange: (range: [number, number]) => void;
+    minPrice: number;
+    maxPrice: number;
+    categories: Category[];
+    categoriesLoading?: boolean;
+    productCounts?: Record<string, number>;
+}
 
-    const { data: categoriesResponse, isLoading: categoriesLoading } = useQuery({
-        queryKey: ['categories'],
-        queryFn: categoriesApi.getAll,
-    });
-    const categories = categoriesResponse?.data || [];
+const Filters = ({
+    selectedCategories,
+    onCategoryChange,
+    priceRange,
+    onPriceChange,
+    minPrice,
+    maxPrice,
+    categories,
+    categoriesLoading = false,
+    productCounts = {},
+}: FilterProps) => {
 
-    const sellerTypes = [
-        { label: 'Local Farms', count: 456 },
-        { label: 'Certified Organic', count: 234 },
-        { label: 'Wholesale', count: 123 }
-    ];
-
-    const availability = [
-        { label: 'In Stock', count: 1156 },
-        { label: 'Pre-order', count: 91 }
-    ];
-
-    const certifications = [
-        { label: 'Organic Certified', count: 789 },
-        { label: 'Non-GMO', count: 567 },
-        { label: 'Fair Trade', count: 234 }
-    ];
-
-    const handleCheckboxChange = (value: string, selectedList: string[], setSelectedList: React.Dispatch<React.SetStateAction<string[]>>) => {
-        if (selectedList.includes(value)) {
-            setSelectedList(selectedList.filter(item => item !== value));
+    const handleCategoryToggle = (categoryId: string) => {
+        if (!selectedCategories || !onCategoryChange) return;
+        if (selectedCategories.includes(categoryId)) {
+            onCategoryChange(selectedCategories.filter(id => id !== categoryId));
         } else {
-            setSelectedList([...selectedList, value]);
+            onCategoryChange([...selectedCategories, categoryId]);
         }
     };
 
-    const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const value = parseInt(e.target.value);
-        setPriceRange([0, value]);
-    };
-
     return (
-        <div className="bg-gray-50 w-full h-full p-6 border-r border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-800 mb-6">Filters</h2>
+        <div className="bg-card w-full p-5 md:p-6 border border-border/40 rounded-2xl flex flex-col gap-6 shadow-sm">
+            <div>
+                <h2 className="text-lg font-bold tracking-tight text-foreground">Filters</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Refine your search results</p>
+            </div>
 
             {/* Category Section */}
-            {!categoriesLoading && categories.length > 0 && (
-                <div className="mb-6">
-                    <h3 className="text-sm font-semibold text-gray-700 mb-3">Category</h3>
-                    <div className="space-y-2">
-                        {categories.map((category: Category) => (
-                            <label key={category.id} className="flex items-center gap-2 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={selectedCategories.includes(category.name)}
-                                    onChange={() => handleCheckboxChange(category.name, selectedCategories, setSelectedCategories)}
-                                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                />
-                                <span className="text-sm text-gray-700">
-                                    {category.name} (0)
-                                </span>
-                            </label>
-                        ))}
-                    </div>
+            {selectedCategories && onCategoryChange && (
+                <div className="border-t border-border/40 pt-5">
+                    <h3 className="text-sm font-semibold text-foreground mb-3">Category</h3>
+                    {categoriesLoading ? (
+                        <p className="text-xs text-muted-foreground">Loading categories...</p>
+                    ) : categories.length > 0 ? (
+                        <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
+                            {categories.map((category: Category) => {
+                                const count = productCounts[category.id] || 0;
+                                return (
+                                    <label key={category.id} className="flex items-center gap-2.5 cursor-pointer py-0.5 group">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedCategories.includes(category.id)}
+                                            onChange={() => handleCategoryToggle(category.id)}
+                                            className="w-4 h-4 rounded border-input text-primary focus:ring-primary accent-primary"
+                                        />
+                                        <span className="text-sm text-muted-foreground group-hover:text-foreground transition-colors">
+                                            {category.name} <span className="text-[10px] text-muted-foreground/60">({count})</span>
+                                        </span>
+                                    </label>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <p className="text-xs text-muted-foreground">No categories available</p>
+                    )}
                 </div>
             )}
 
             {/* Price Range Section */}
-            <div className="mb-6">
-                <h3 className="text-sm font-semibold text-gray-700 mb-3">Price Range</h3>
-                <div className="grid grid-cols-2 gap-2 mb-3">
-                    <input
-                        type="text"
-                        placeholder="Min"
-                        value={priceRange[0]}
-                        readOnly
-                        className="px-3 py-2 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            <div className="border-t border-border/40 pt-5">
+                <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-foreground">Price Range</h3>
+                    <span className="text-xs font-semibold text-primary">
+                        KES {priceRange[0]} - KES {priceRange[1]}
+                    </span>
+                </div>
+                <div className="px-1 py-2">
+                    <Slider
+                        min={minPrice}
+                        max={maxPrice}
+                        step={Math.max(1, Math.round((maxPrice - minPrice) / 100))}
+                        value={priceRange}
+                        onValueChange={(val) => onPriceChange(val as [number, number])}
+                        className="my-4"
                     />
-                    <input
-                        type="text"
-                        placeholder="Max"
-                        value={priceRange[1]}
-                        readOnly
-                        className="px-3 py-2 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                    />
                 </div>
-                <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={priceRange[1]}
-                    onChange={handlePriceChange}
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-slate-700"
-                />
-                <div className="flex justify-between mt-2">
-                    <span className="text-xs text-gray-600">$0</span>
-                    <span className="text-xs text-gray-600">$100+</span>
-                </div>
-            </div>
-
-            {/* Seller Type Section */}
-            <div className="mb-6">
-                <h3 className="text-sm font-semibold text-gray-700 mb-3">Seller Type</h3>
-                <div className="space-y-2">
-                    {sellerTypes.map((type, idx) => (
-                        <label key={idx} className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={selectedSellerTypes.includes(type.label)}
-                                onChange={() => handleCheckboxChange(type.label, selectedSellerTypes, setSelectedSellerTypes)}
-                                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            />
-                            <span className="text-sm text-gray-700">
-                                {type.label} ({type.count})
-                            </span>
-                        </label>
-                    ))}
-                </div>
-            </div>
-
-            {/* Availability Section */}
-            <div className="mb-6">
-                <h3 className="text-sm font-semibold text-gray-700 mb-3">Availability</h3>
-                <div className="space-y-2">
-                    {availability.map((avail, idx) => (
-                        <label key={idx} className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={selectedAvailability.includes(avail.label)}
-                                onChange={() => handleCheckboxChange(avail.label, selectedAvailability, setSelectedAvailability)}
-                                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            />
-                            <span className="text-sm text-gray-700">
-                                {avail.label} ({avail.count})
-                            </span>
-                        </label>
-                    ))}
-                </div>
-            </div>
-
-            {/* Certification Section */}
-            <div className="mb-6">
-                <h3 className="text-sm font-semibold text-gray-700 mb-3">Certification</h3>
-                <div className="space-y-2">
-                    {certifications.map((cert, idx) => (
-                        <label key={idx} className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={selectedCertifications.includes(cert.label)}
-                                onChange={() => handleCheckboxChange(cert.label, selectedCertifications, setSelectedCertifications)}
-                                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            />
-                            <span className="text-sm text-gray-700">
-                                {cert.label} ({cert.count})
-                            </span>
-                        </label>
-                    ))}
+                <div className="flex justify-between text-xs text-muted-foreground px-1">
+                    <span>KES {minPrice}</span>
+                    <span>KES {maxPrice}</span>
                 </div>
             </div>
         </div>

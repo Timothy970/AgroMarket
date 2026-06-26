@@ -32,7 +32,7 @@ import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/store/authStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { productsApi, ordersApi } from "@/lib/api";
+import { productsApi, ordersApi, payoutsApi, type SupplierPayout } from "@/lib/api";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function SellerDashboard() {
@@ -67,6 +67,15 @@ export default function SellerDashboard() {
     enabled: !!user?.id,
   });
   const orders = ordersResponse?.data || [];
+
+  const [payoutStatusFilter, setPayoutStatusFilter] = useState<string>("all");
+
+  const { data: payoutsResponse, isLoading: payoutsLoading } = useQuery({
+    queryKey: ['seller-payouts', user?.id, payoutStatusFilter],
+    queryFn: () => payoutsApi.getSellerPayouts(payoutStatusFilter === "all" ? undefined : payoutStatusFilter),
+    enabled: !!user?.id,
+  });
+  const payouts = payoutsResponse?.data || [];
 
   const updateStatusMutation = useMutation({
     mutationFn: ({ orderId, status }: { orderId: string; status: any }) =>
@@ -158,6 +167,15 @@ export default function SellerDashboard() {
                 >
                   <ShoppingBag />
                   <span>Orders</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeView === "payments"}
+                  onClick={() => setActiveView("payments")}
+                >
+                  <DollarSign />
+                  <span>Payments</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
@@ -366,6 +384,93 @@ export default function SellerDashboard() {
                   <ShoppingBag className="mx-auto h-10 w-10 text-muted-foreground" />
                   <h3 className="mt-4 text-lg font-semibold">No orders yet</h3>
                   <p className="text-muted-foreground">When you receive orders, they will appear here.</p>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {activeView === "payments" && (
+          <>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">Payments Tracker</h1>
+                <p className="text-sm text-muted-foreground">Track your earnings, payout status, and transaction history</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground font-medium">Status Filter:</span>
+                <Select
+                  value={payoutStatusFilter}
+                  onValueChange={(val) => setPayoutStatusFilter(val)}
+                >
+                  <SelectTrigger className="w-[150px]">
+                    <SelectValue placeholder="All Statuses" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Statuses</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="approved">Approved</SelectItem>
+                    <SelectItem value="paid">Paid</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {payoutsLoading ? (
+              <p className="text-muted-foreground">Loading payments history...</p>
+            ) : payouts && payouts.length > 0 ? (
+              <div className="grid gap-4 mt-2">
+                {payouts.map((payout: any) => {
+                  let statusLabel = "Pending Approval";
+                  let statusColor = "bg-yellow-500/10 text-yellow-500 border-yellow-500/20";
+                  
+                  if (payout.status === 'approved') {
+                    statusLabel = "Approved (Processing)";
+                    statusColor = "bg-blue-500/10 text-blue-500 border-blue-500/20";
+                  } else if (payout.status === 'paid') {
+                    statusLabel = "Paid via Mobile Money";
+                    statusColor = "bg-green-500/10 text-green-500 border-green-500/20";
+                  }
+
+                  return (
+                    <Card key={payout.id} className="p-6">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div className="space-y-1.5 flex-1">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <h3 className="font-semibold text-lg">Payout Reference #{payout.id.slice(0, 8)}</h3>
+                            <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${statusColor}`}>
+                              {statusLabel}
+                            </span>
+                          </div>
+                          <div className="text-sm text-muted-foreground">
+                            <p><span className="font-medium text-foreground">Order Ref:</span> #{payout.orderId.slice(0, 8)}</p>
+                            <p><span className="font-medium text-foreground">Payment Phone:</span> {payout.paymentPhone}</p>
+                            <p><span className="font-medium text-foreground">Created:</span> {payout.createdAt ? new Date(payout.createdAt).toLocaleDateString() : 'N/A'}</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-8 items-center">
+                          <div className="text-right">
+                            <div className="text-xs text-muted-foreground">Sales Subtotal</div>
+                            <div className="font-semibold text-sm">KES {Number(payout.totalAmount).toLocaleString()}</div>
+                          </div>
+                          <div className="text-right border-l pl-8">
+                            <div className="text-xs text-muted-foreground font-semibold">Net Payout</div>
+                            <div className="font-bold text-xl text-primary">
+                              {payout.payoutAmount ? `KES ${Number(payout.payoutAmount).toLocaleString()}` : "Pending Admin"}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-64 border rounded-lg border-dashed">
+                <div className="text-center">
+                  <DollarSign className="mx-auto h-10 w-10 text-muted-foreground" />
+                  <h3 className="mt-4 text-lg font-semibold">No payouts found</h3>
+                  <p className="text-muted-foreground mt-1">When your orders are paid by buyers, payout requests will appear here.</p>
                 </div>
               </div>
             )}

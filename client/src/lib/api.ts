@@ -35,11 +35,21 @@ export const categoriesApi = {
     const response = await api.post<ApiResponse<Category>>('/api/categories', data);
     return response.data;
   },
+
+  update: async (id: string, data: Partial<InsertCategory>): Promise<ApiResponse<Category>> => {
+    const response = await api.patch<ApiResponse<Category>>(`/api/categories/${id}`, data);
+    return response.data;
+  },
+
+  delete: async (id: string): Promise<ApiResponse<null>> => {
+    const response = await api.delete<ApiResponse<null>>(`/api/categories/${id}`);
+    return response.data;
+  },
 };
 
 // Products API
 export const productsApi = {
-  getAll: async (filters?: { status?: 'pending' | 'approved' | 'rejected'; sellerId?: string; category?: string; search?: string }): Promise<ApiResponse<Product[]>> => {
+  getAll: async (filters?: { status?: 'pending' | 'approved' | 'rejected'; sellerId?: string; category?: string; search?: string; isFeatured?: boolean }): Promise<ApiResponse<Product[]>> => {
     const response = await api.get<ApiResponse<Product[]>>('/api/products', { params: filters });
     return response.data;
   },
@@ -61,6 +71,21 @@ export const productsApi = {
   
   delete: async (id: string): Promise<ApiResponse<null>> => {
     const response = await api.delete<ApiResponse<null>>(`/api/products/${id}`);
+    return response.data;
+  },
+
+  toggleFeatured: async (id: string, isFeatured: boolean): Promise<ApiResponse<Product>> => {
+    const response = await api.patch<ApiResponse<Product>>(`/api/admin/products/${id}/featured`, { isFeatured });
+    return response.data;
+  },
+
+  approve: async (id: string): Promise<ApiResponse<Product>> => {
+    const response = await api.post<ApiResponse<Product>>(`/api/admin/products/${id}/approve`);
+    return response.data;
+  },
+
+  reject: async (id: string, reason: string): Promise<ApiResponse<Product>> => {
+    const response = await api.post<ApiResponse<Product>>(`/api/admin/products/${id}/reject`, { reason });
     return response.data;
   },
 };
@@ -126,6 +151,24 @@ export const cartApi = {
   },
 };
 
+export type CreateOrderPayload = InsertOrder & {
+  items: Omit<OrderItem, 'id' | 'orderId' | 'createdAt' | 'updatedAt'>[];
+};
+
+export type SupplierPayout = {
+  id: string;
+  orderId: string;
+  sellerId: string;
+  totalAmount: string;
+  payoutAmount: string | null;
+  status: 'pending' | 'approved' | 'paid';
+  paymentPhone: string;
+  createdAt: string;
+  updatedAt: string;
+  sellerEmail?: string;
+  sellerName?: string;
+};
+
 export const ordersApi = {
   getAll: async (type?: 'buyer' | 'seller'): Promise<ApiResponse<OrderWithItems[]>> => {
     const response = await api.get<ApiResponse<OrderWithItems[]>>('/api/orders', { params: { type } });
@@ -137,8 +180,8 @@ export const ordersApi = {
     return response.data;
   },
   
-  create: async (data: InsertOrder): Promise<ApiResponse<Order>> => {
-    const response = await api.post<ApiResponse<Order>>('/api/orders', data);
+  create: async (data: CreateOrderPayload): Promise<ApiResponse<Order & { items: OrderItem[] }>> => {
+    const response = await api.post<ApiResponse<Order & { items: OrderItem[] }>>('/api/orders', data);
     return response.data;
   },
   
@@ -149,6 +192,28 @@ export const ordersApi = {
   
   updatePayment: async (id: string, data: { depositPaid?: boolean; balancePaid?: boolean; stripePaymentIntentId?: string }): Promise<ApiResponse<Order>> => {
     const response = await api.patch<ApiResponse<Order>>(`/api/orders/${id}/payment`, data);
+    return response.data;
+  },
+};
+
+export const payoutsApi = {
+  getAdminPayouts: async (status?: string): Promise<ApiResponse<SupplierPayout[]>> => {
+    const response = await api.get<ApiResponse<SupplierPayout[]>>('/api/admin/payouts', { params: { status } });
+    return response.data;
+  },
+  
+  getSellerPayouts: async (status?: string): Promise<ApiResponse<SupplierPayout[]>> => {
+    const response = await api.get<ApiResponse<SupplierPayout[]>>('/api/seller/payouts', { params: { status } });
+    return response.data;
+  },
+  
+  approvePayout: async (id: string, payoutAmount: number): Promise<ApiResponse<null>> => {
+    const response = await api.patch<ApiResponse<null>>(`/api/admin/payouts/${id}/approve`, { payoutAmount });
+    return response.data;
+  },
+  
+  paySupplier: async (id: string): Promise<ApiResponse<null>> => {
+    const response = await api.post<ApiResponse<null>>(`/api/admin/payouts/${id}/pay`);
     return response.data;
   },
 };

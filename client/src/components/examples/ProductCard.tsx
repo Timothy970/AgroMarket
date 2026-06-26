@@ -21,6 +21,7 @@ export default function ProductCardExample() {
           images: [tomatoesImg],
           location: "Nairobi, Kenya",
           status: "approved",
+          isFeatured: false,
           rejectionReason: null,
           approvedAt: new Date(),
           approvedBy: "admin1",

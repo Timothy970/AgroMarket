@@ -23,8 +23,8 @@ export default function Home() {
   });
 
   const { data: featuredProductsResponse, isLoading: featuredProductsLoading } = useQuery({
-    queryKey: ['products'],
-    queryFn: () => productsApi.getAll(),
+    queryKey: ['products', { isFeatured: true, status: 'approved' }],
+    queryFn: () => productsApi.getAll({ isFeatured: true, status: 'approved' }),
   });
 
   const categories = categoriesResponse?.data || [];
@@ -107,7 +107,7 @@ export default function Home() {
                   key={category.id}
                   name={category.name}
                   icon={category.imageUrl || categoryIcons[category.name.toLowerCase()] || dairyIcon}
-                  count={0}
+                  count={(category as any).productCount}
                   onClick={() => handleCategoryNavigation(category.id)}
                 />
               ))
@@ -157,6 +157,7 @@ export default function Home() {
               size="lg"
               className="bg-white text-primary hover:bg-white/90"
               data-testid="button-start-selling"
+               onClick={() => setLocation("/seller")}
             >
               Start Selling Today
               <ArrowRight className="ml-2 w-4 h-4" />

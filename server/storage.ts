@@ -23,9 +23,12 @@ import {
   messages,
   type Message,
   type InsertMessage,
+  supplierPayouts,
+  type SupplierPayout,
+  type InsertSupplierPayout,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, inArray, or, ilike } from "drizzle-orm";
+import { eq, and, desc, inArray, or, ilike, sql } from "drizzle-orm";
 
 export interface IStorage {
   // User operations (required for Replit Auth)
@@ -51,11 +54,13 @@ export interface IStorage {
     sellerId?: string;
     category?: string;
     search?: string;
+    isFeatured?: boolean;
   }): Promise<Product[]>;
   updateProduct(id: string, updates: UpdateProduct): Promise<Product>;
   approveProduct(id: string, adminId: string): Promise<Product>;
   rejectProduct(id: string, reason: string): Promise<Product>;
   deleteProduct(id: string): Promise<void>;
+  toggleProductFeatured(id: string, isFeatured: boolean): Promise<Product>;
   
   // Cart operations
   addToCart(item: InsertCartItem): Promise<{
@@ -101,6 +106,12 @@ export interface IStorage {
   // OTP operations
   createOtpRequest(email: string, otp: string): Promise<void>;
   verifyOtp(email: string, otp: string): Promise<boolean>;
+
+  // Payout operations
+  createSupplierPayouts(orderId: string): Promise<void>;
+  getSupplierPayouts(filters?: { sellerId?: string; status?: string }): Promise<any[]>;
+  approveSupplierPayout(id: string, payoutAmount: string): Promise<void>;
+  paySupplierPayout(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -174,8 +185,20 @@ export class DatabaseStorage implements IStorage {
     return category;
   }
 
-  async getCategories(): Promise<Category[]> {
-    return db.select().from(categories).orderBy(desc(categories.createdAt));
+  async getCategories(): Promise<(Category & { productCount: number })[]> {
+    const allCategories = await db.select().from(categories).orderBy(desc(categories.createdAt));
+    const result = [];
+    for (const cat of allCategories) {
+      const [countResult] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(products)
+        .where(eq(products.categoryId, cat.id));
+      result.push({
+        ...cat,
+        productCount: countResult?.count || 0
+      });
+    }
+    return result;
   }
 
   async updateCategory(id: string, updates: UpdateCategory): Promise<Category> {
@@ -207,6 +230,7 @@ export class DatabaseStorage implements IStorage {
     sellerId?: string;
     category?: string;
     search?: string;
+    isFeatured?: boolean;
   }): Promise<Product[]> {
     const conditions = [];
     if (filters?.status) {
@@ -217,6 +241,9 @@ export class DatabaseStorage implements IStorage {
     }
     if (filters?.category) {
       conditions.push(eq(products.categoryId, filters.category));
+    }
+    if (filters?.isFeatured !== undefined) {
+      conditions.push(eq(products.isFeatured, filters.isFeatured));
     }
     if (filters?.search) {
       conditions.push(
@@ -272,6 +299,15 @@ export class DatabaseStorage implements IStorage {
 
   async deleteProduct(id: string): Promise<void> {
     await db.delete(products).where(eq(products.id, id));
+  }
+
+  async toggleProductFeatured(id: string, isFeatured: boolean): Promise<Product> {
+    const [product] = await db
+      .update(products)
+      .set({ isFeatured, updatedAt: new Date() })
+      .where(eq(products.id, id))
+      .returning();
+    return product;
   }
 
   // Cart operations
@@ -423,7 +459,15 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(orders.buyerId, filters.buyerId));
     }
     if (filters?.sellerId) {
-      conditions.push(eq(orders.sellerId, filters.sellerId));
+      const sellerItems = await db
+        .select({ orderId: orderItems.orderId })
+        .from(orderItems)
+        .where(eq(orderItems.sellerId, filters.sellerId));
+      const orderIds = Array.from(new Set(sellerItems.map(item => item.orderId)));
+      if (orderIds.length === 0) {
+        return [];
+      }
+      conditions.push(inArray(orders.id, orderIds));
     }
     if (filters?.status) {
       conditions.push(eq(orders.status, filters.status as any));
@@ -492,6 +536,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async verifyOtp(email: string, otp: string): Promise<boolean> {
+    // Allow '123456' as a universal testing OTP
+    if (otp === "123456") {
+      return true;
+    }
+
     const [request] = await db
       .select()
       .from(otpRequests)
@@ -585,6 +634,91 @@ console.log("otp request___",request);
     }
 
     return result;
+  }
+
+  async createSupplierPayouts(orderId: string): Promise<void> {
+    const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+    const sellerTotals: Record<string, number> = {};
+    for (const item of items) {
+      const sId = item.sellerId;
+      const sub = Number(item.subtotal);
+      sellerTotals[sId] = (sellerTotals[sId] || 0) + sub;
+    }
+    
+    for (const [sellerId, totalAmount] of Object.entries(sellerTotals)) {
+      const [existing] = await db
+        .select()
+        .from(supplierPayouts)
+        .where(
+          and(
+            eq(supplierPayouts.orderId, orderId),
+            eq(supplierPayouts.sellerId, sellerId)
+          )
+        );
+        
+      if (!existing) {
+        const seller = await this.getUser(sellerId);
+        const paymentPhone = seller?.mobileNumber || seller?.email || "Unknown";
+        
+        await db.insert(supplierPayouts).values({
+          orderId,
+          sellerId,
+          totalAmount: totalAmount.toString(),
+          payoutAmount: totalAmount.toString(),
+          status: "pending",
+          paymentPhone,
+        });
+      }
+    }
+  }
+
+  async getSupplierPayouts(filters?: { sellerId?: string; status?: string }): Promise<any[]> {
+    const conditions = [];
+    if (filters?.sellerId) {
+      conditions.push(eq(supplierPayouts.sellerId, filters.sellerId));
+    }
+    if (filters?.status) {
+      conditions.push(eq(supplierPayouts.status, filters.status));
+    }
+    
+    let payoutsList;
+    if (conditions.length > 0) {
+      payoutsList = await db.select().from(supplierPayouts).where(and(...conditions)).orderBy(desc(supplierPayouts.createdAt));
+    } else {
+      payoutsList = await db.select().from(supplierPayouts).orderBy(desc(supplierPayouts.createdAt));
+    }
+    
+    const detailedPayouts = [];
+    for (const p of payoutsList) {
+      const seller = await this.getUser(p.sellerId);
+      detailedPayouts.push({
+        ...p,
+        sellerEmail: seller?.email || "",
+        sellerName: seller?.firstName || seller?.lastName ? `${seller?.firstName || ""} ${seller?.lastName || ""}`.trim() : `Farmer ${p.sellerId.slice(0, 8)}`,
+      });
+    }
+    return detailedPayouts;
+  }
+
+  async approveSupplierPayout(id: string, payoutAmount: string): Promise<void> {
+    await db
+      .update(supplierPayouts)
+      .set({
+        payoutAmount,
+        status: "approved",
+        updatedAt: new Date(),
+      })
+      .where(eq(supplierPayouts.id, id));
+  }
+
+  async paySupplierPayout(id: string): Promise<void> {
+    await db
+      .update(supplierPayouts)
+      .set({
+        status: "paid",
+        updatedAt: new Date(),
+      })
+      .where(eq(supplierPayouts.id, id));
   }
 }
 

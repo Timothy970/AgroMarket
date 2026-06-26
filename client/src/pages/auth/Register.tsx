@@ -31,6 +31,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Link } from "wouter";
+import Header from "@/components/Header";
 
 const registerSchema = z.object({
     email: z.string().email("Please enter a valid email address"),
@@ -82,75 +83,80 @@ export default function Register() {
         setIsLoading(true);
         try {
             await registerMutation.mutateAsync(data);
+        } catch (error) {
+            // Already handled by onError in registerMutation
         } finally {
             setIsLoading(false);
         }
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-            <Card className="w-full max-w-md">
-                <CardHeader className="space-y-1">
-                    <CardTitle className="text-2xl font-bold text-center">
-                        Create an account
-                    </CardTitle>
-                    <CardDescription className="text-center">
-                        Enter your email and select your role to get started
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <Form {...form}>
-                        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                            <FormField
-                                control={form.control}
-                                name="email"
-                                render={({ field }) => (
-                                    <FormItem>
-                                        <FormLabel>Email</FormLabel>
-                                        <FormControl>
-                                            <Input placeholder="name@example.com" {...field} />
-                                        </FormControl>
-                                        <FormMessage />
-                                    </FormItem>
-                                )}
-                            />
-                            <FormField
-                                control={form.control}
-                                name="role"
-                                render={({ field }) => (
-                                    <FormItem>
-                                        <FormLabel>I am a</FormLabel>
-                                        <Select
-                                            onValueChange={field.onChange}
-                                            defaultValue={field.value}
-                                        >
+        <div className="min-h-screen flex flex-col bg-gray-50">
+            <Header showSearch={false} />
+            <div className="flex-1 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+                <Card className="w-full max-w-md">
+                    <CardHeader className="space-y-1">
+                        <CardTitle className="text-2xl font-bold text-center">
+                            Create an account
+                        </CardTitle>
+                        <CardDescription className="text-center">
+                            Enter your email and select your role to get started
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <Form {...form}>
+                            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                                <FormField
+                                    control={form.control}
+                                    name="email"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel>Email</FormLabel>
                                             <FormControl>
-                                                <SelectTrigger>
-                                                    <SelectValue placeholder="Select a role" />
-                                                </SelectTrigger>
+                                                <Input placeholder="name@example.com" {...field} />
                                             </FormControl>
-                                            <SelectContent>
-                                                <SelectItem value="buyer">Buyer</SelectItem>
-                                                <SelectItem value="seller">Seller</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                        <FormMessage />
-                                    </FormItem>
-                                )}
-                            />
-                            <Button className="w-full" type="submit" disabled={isLoading}>
-                                {isLoading ? "Sending OTP..." : "Register"}
-                            </Button>
-                        </form>
-                    </Form>
-                    <div className="mt-4 text-center text-sm">
-                        Already have an account?{" "}
-                        <Link href="/login" className="underline text-primary">
-                            Sign In
-                        </Link>
-                    </div>
-                </CardContent>
-            </Card>
+                                            <FormMessage />
+                                        </FormItem>
+                                    )}
+                                />
+                                <FormField
+                                    control={form.control}
+                                    name="role"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel>I am a</FormLabel>
+                                            <Select
+                                                onValueChange={field.onChange}
+                                                defaultValue={field.value}
+                                            >
+                                                <FormControl>
+                                                    <SelectTrigger>
+                                                        <SelectValue placeholder="Select a role" />
+                                                    </SelectTrigger>
+                                                </FormControl>
+                                                <SelectContent>
+                                                    <SelectItem value="buyer">Buyer</SelectItem>
+                                                    <SelectItem value="seller">Seller</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                            <FormMessage />
+                                        </FormItem>
+                                    )}
+                                />
+                                <Button className="w-full" type="submit" disabled={isLoading}>
+                                    {isLoading ? "Sending OTP..." : "Register"}
+                                </Button>
+                            </form>
+                        </Form>
+                        <div className="mt-4 text-center text-sm">
+                            Already have an account?{" "}
+                            <Link href="/login" className="underline text-primary">
+                                Sign In
+                            </Link>
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
         </div>
     );
 }

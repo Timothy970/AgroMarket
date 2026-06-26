@@ -20,10 +20,11 @@ export default function ProductDetail() {
     const [location, setLocation] = useLocation();
     const [mode, setMode] = useState<PurchaseMode>("small");
     const [quantity, setQuantity] = useState(1);
+    const [activeImageIndex, setActiveImageIndex] = useState(0);
     const [match, params] = useRoute("/product/:id");
     const productId = match ? params.id : null;
 
-    const { token, isAuthenticated } = useAuthStore();
+    const { user, token, isAuthenticated } = useAuthStore();
     const { toast } = useToast();
     const queryClient = useQueryClient();
 
@@ -133,21 +134,29 @@ export default function ProductDetail() {
 
                 <div className="grid md:grid-cols-2 gap-8 lg:gap-12">
                     <div className="space-y-4">
-                        <div className="aspect-square rounded-xl overflow-hidden bg-muted">
+                        <div className="aspect-square rounded-xl overflow-hidden bg-muted border">
                             <img
-                                src={product.images[0]}
+                                src={product.images[activeImageIndex] || product.images[0]}
                                 alt={product.name}
-                                className="w-full h-full object-cover"
+                                className="w-full h-full object-cover transition-all duration-300"
                                 data-testid="img-product-main"
                             />
                         </div>
-                        <div className="grid grid-cols-3 gap-4">
-                            {product.images.slice(1).map((img) => (
-                                <div key={img + product.id} className="aspect-square rounded-lg overflow-hidden bg-muted cursor-pointer hover-elevate">
-                                    <img src={img} alt={`${product.name} ${product.id}`} className="w-full h-full object-cover" />
-                                </div>
-                            ))}
-                        </div>
+                        {product.images.length > 1 && (
+                            <div className="grid grid-cols-4 gap-3">
+                                {product.images.map((img, idx) => (
+                                    <div 
+                                        key={idx} 
+                                        className={`aspect-square rounded-lg overflow-hidden bg-muted cursor-pointer transition-all border-2 ${
+                                            activeImageIndex === idx ? "border-primary shadow-sm scale-95" : "border-transparent hover:border-muted-foreground/30"
+                                        }`}
+                                        onClick={() => setActiveImageIndex(idx)}
+                                    >
+                                        <img src={img} alt={`${product.name} thumbnail ${idx}`} className="w-full h-full object-cover" />
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
 
                     <div className="space-y-6">
@@ -202,17 +211,23 @@ export default function ProductDetail() {
                                 <p className="text-sm">
                                     <span className="font-semibold">Minimum order:</span> {product.minBulkQuantity} {product.bulkUnit}
                                 </p>
-                                <Link href={`/chat?userId=${product.sellerId}&name=Farmer%20${product.sellerId.slice(0, 8)}`}>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="mt-3 w-full"
-                                        data-testid="button-contact-seller"
-                                    >
-                                        <MessageCircle className="w-4 h-4 mr-2" />
-                                        Contact Seller for Negotiation
-                                    </Button>
-                                </Link>
+                                {user?.id !== product.sellerId ? (
+                                    <Link href={`/chat?userId=${product.sellerId}&name=Farmer%20${product.sellerId.slice(0, 8)}`}>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="mt-3 w-full"
+                                            data-testid="button-contact-seller"
+                                        >
+                                            <MessageCircle className="w-4 h-4 mr-2" />
+                                            Contact Seller for Negotiation
+                                        </Button>
+                                    </Link>
+                                ) : (
+                                    <p className="text-xs text-muted-foreground mt-3 italic">
+                                        This is your product listing.
+                                    </p>
+                                )}
                             </div>
                         )}
 

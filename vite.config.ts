@@ -38,6 +38,10 @@ export default defineConfig(({ mode }) => {
           target: `http://localhost:${backendPort}`,
           changeOrigin: true,
         },
+        "/uploads": {
+          target: `http://localhost:${backendPort}`,
+          changeOrigin: true,
+        },
         "/ws": {
           target: `ws://localhost:${backendPort}`,
           ws: true,

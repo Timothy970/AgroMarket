@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import Header from "@/components/Header";
 import MobileNav from "@/components/MobileNav";
 import Footer from "@/components/footer";
@@ -10,11 +10,11 @@ import { productsApi, cartApi } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/store/authStore";
 import { queryClient } from "@/lib/queryClient";
+
 export default function CategoryPage() {
     const [location, setLocation] = useLocation();
     const { toast } = useToast();
-    const { user, token, isAuthenticated } = useAuthStore();
-    //get category id from url
+    const { token, isAuthenticated } = useAuthStore();
     const [match, params] = useRoute("/category/:id");
     const categoryId = match ? params.id : null;
 
@@ -27,14 +27,43 @@ export default function CategoryPage() {
 
     const { data: categoryProductsResponse, isLoading: categoryProductsLoading } = useQuery({
         queryKey: ['products', 'category', categoryId],
-        queryFn: () => productsApi.getAll({ category: categoryId ?? undefined }),
+        queryFn: () => productsApi.getAll({ category: categoryId ?? undefined, status: 'approved' }),
         enabled: !!categoryId,
     });
 
     const categoryProducts = categoryProductsResponse?.data || [];
+
+    // Price Filter States
+    const [priceRange, setPriceRange] = useState<[number, number]>([0, 10000]);
+    const [hasInitializedPrices, setHasInitializedPrices] = useState(false);
+
+    // Compute range bounds based on actual product smallPrice
+    const prices = useMemo(() => categoryProducts.map(p => Number(p.smallPrice)), [categoryProducts]);
+    const minPrice = useMemo(() => prices.length > 0 ? Math.min(...prices) : 0, [prices]);
+    const maxPrice = useMemo(() => prices.length > 0 ? Math.max(...prices) : 10000, [prices]);
+
+    // Reset range bounds initialization when switching categories
+    useEffect(() => {
+        setHasInitializedPrices(false);
+    }, [categoryId]);
+
+    // Reactively initialize prices range state once categories products load
+    useEffect(() => {
+        if (categoryProducts.length > 0 && !hasInitializedPrices) {
+            setPriceRange([minPrice, maxPrice]);
+            setHasInitializedPrices(true);
+        }
+    }, [categoryProducts, hasInitializedPrices, minPrice, maxPrice]);
+
+    // Filter products locally on price
+    const filteredProducts = useMemo(() => {
+        return categoryProducts.filter(product => {
+            const price = Number(product.smallPrice);
+            return price >= priceRange[0] && price <= priceRange[1];
+        });
+    }, [categoryProducts, priceRange]);
+
     const addToCartHandler = async (productId: string) => {
-        // Implement add to cart functionality here
-        //must be logged in to add to cart
         if (!isAuthenticated) {
             toast({
                 title: "Authentication Required",
@@ -52,51 +81,54 @@ export default function CategoryPage() {
             });
             return;
         }
-        //delete tansient cart after adding to authenticated user's cart
         queryClient.invalidateQueries({ queryKey: ['cart'] });
         toast({
             title: "Success",
             description: `Product added to cart successfully.`,
         });
     };
+
     const handleProductClick = (productId: string) => {
-        // Implement product click functionality here
-        console.log(`Product ${productId} clicked`);
         setLocation(`/product/${productId}`);
     };
+
     return (
         <div className="min-h-screen bg-background">
             <Header cartCount={cartCount} />
-            {/* two div sections below, filter div on the left with 2/5 width, products div on the right with 3/5 width */}
-            <div className="w-full mx-auto px-4 md:px-20">
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-6 h-full">
+            <div className="w-full mx-auto px-4 md:px-20 py-6">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-6 h-full items-start">
                     {/* Filter Section */}
-                    <div className="md:col-span-1">
-                        <Filter />
+                    <div className="md:col-span-1 md:sticky md:top-20">
+                        <Filter
+                            priceRange={priceRange}
+                            onPriceChange={setPriceRange}
+                            minPrice={minPrice}
+                            maxPrice={maxPrice}
+                            categories={[]}
+                        />
                     </div>
                     {/* Products Section */}
-                    <div className="max-h-screen overflow-y-auto md:col-span-4">
-                        <section className="py-0 md:py-2">
+                    <div className="md:col-span-4">
+                        <section className="py-0">
                             <div className="w-full mx-auto px-2">
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                                     {categoryProductsLoading ? (
                                         <p className="text-muted-foreground">Loading products...</p>
-                                    ) : categoryProducts.length > 0 ? (
-                                        categoryProducts.map((product) => (
+                                    ) : filteredProducts.length > 0 ? (
+                                        filteredProducts.map((product) => (
                                             <ProductCard key={product.id} product={product} onAddToCart={addToCartHandler} onClick={handleProductClick} />
                                         ))
                                     ) : (
-                                        <p className="text-muted-foreground">No products available</p>
+                                        <p className="text-muted-foreground">No products available in this price range</p>
                                     )}
                                 </div>
                             </div>
-
                         </section>
                     </div>
                 </div>
             </div>
             <Footer />
-            <MobileNav cartCount={0} />
+            <MobileNav cartCount={cartCount} />
         </div>
     );
 }

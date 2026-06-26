@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
+import Header from "@/components/Header";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -112,6 +113,8 @@ export default function VerifyOtp() {
         setIsLoading(true);
         try {
             await verifyMutation.mutateAsync(data);
+        } catch (error) {
+            // Already handled by onError in verifyMutation
         } finally {
             setIsLoading(false);
         }
@@ -120,48 +123,51 @@ export default function VerifyOtp() {
     if (!email) return null;
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-            <Card className="w-full max-w-md">
-                <CardHeader className="space-y-1">
-                    <CardTitle className="text-2xl font-bold text-center">
-                        Verify OTP
-                    </CardTitle>
-                    <CardDescription className="text-center">
-                        Enter the 6-digit code sent to {email}
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <Form {...form}>
-                        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                            <FormField
-                                control={form.control}
-                                name="otp"
-                                render={({ field }) => (
-                                    <FormItem className="flex flex-col items-center">
-                                        <FormLabel className="sr-only">OTP</FormLabel>
-                                        <FormControl>
-                                            <InputOTP maxLength={6} {...field}>
-                                                <InputOTPGroup>
-                                                    <InputOTPSlot index={0} />
-                                                    <InputOTPSlot index={1} />
-                                                    <InputOTPSlot index={2} />
-                                                    <InputOTPSlot index={3} />
-                                                    <InputOTPSlot index={4} />
-                                                    <InputOTPSlot index={5} />
-                                                </InputOTPGroup>
-                                            </InputOTP>
-                                        </FormControl>
-                                        <FormMessage />
-                                    </FormItem>
-                                )}
-                            />
-                            <Button className="w-full" type="submit" disabled={isLoading}>
-                                {isLoading ? "Verifying..." : "Verify"}
-                            </Button>
-                        </form>
-                    </Form>
-                </CardContent>
-            </Card>
+        <div className="min-h-screen flex flex-col bg-gray-50">
+            <Header showSearch={false} />
+            <div className="flex-1 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+                <Card className="w-full max-w-md">
+                    <CardHeader className="space-y-1">
+                        <CardTitle className="text-2xl font-bold text-center">
+                            Verify OTP
+                        </CardTitle>
+                        <CardDescription className="text-center">
+                            Enter the 6-digit code sent to {email}
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <Form {...form}>
+                            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                                <FormField
+                                    control={form.control}
+                                    name="otp"
+                                    render={({ field }) => (
+                                        <FormItem className="flex flex-col items-center">
+                                            <FormLabel className="sr-only">OTP</FormLabel>
+                                            <FormControl>
+                                                <InputOTP maxLength={6} {...field}>
+                                                    <InputOTPGroup>
+                                                        <InputOTPSlot index={0} />
+                                                        <InputOTPSlot index={1} />
+                                                        <InputOTPSlot index={2} />
+                                                        <InputOTPSlot index={3} />
+                                                        <InputOTPSlot index={4} />
+                                                        <InputOTPSlot index={5} />
+                                                    </InputOTPGroup>
+                                                </InputOTP>
+                                            </FormControl>
+                                            <FormMessage />
+                                        </FormItem>
+                                    )}
+                                />
+                                <Button className="w-full" type="submit" disabled={isLoading}>
+                                    {isLoading ? "Verifying..." : "Verify"}
+                                </Button>
+                            </form>
+                        </Form>
+                    </CardContent>
+                </Card>
+            </div>
         </div>
     );
 }

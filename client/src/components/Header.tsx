@@ -81,6 +81,13 @@ export default function Header({ cartCount = 0, showSearch = true }: HeaderProps
             </Link>
             {user && (
               <>
+                {user.role === "admin" && (
+                  <Link href="/admin">
+                    <Button variant="ghost" size="sm" className="hidden md:inline-flex text-sm text-destructive font-semibold">
+                      Admin Dashboard
+                    </Button>
+                  </Link>
+                )}
                 <Link href="/chat">
                   <Button variant="ghost" size="sm" className="hidden md:inline-flex text-sm">
                     Chat
@@ -113,7 +120,18 @@ export default function Header({ cartCount = 0, showSearch = true }: HeaderProps
                 <LogOut className="w-4 h-4 mr-2" />
                 Sign Out
               </Button>
-            ) : null}
+            ) : (
+              <Link href="/login">
+                <Button
+                  variant="default"
+                  size="default"
+                  className="hidden md:inline-flex"
+                  data-testid="button-login"
+                >
+                  Log In
+                </Button>
+              </Link>
+            )}
           </div>
         </div>
       </div>

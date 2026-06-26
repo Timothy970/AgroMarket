@@ -19,6 +19,11 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: false }));
 
+// Register AVIF mime type to ensure proper browser rendering
+if ((express.static as any).mime?.define) {
+  (express.static as any).mime.define({ 'image/avif': ['avif'] });
+}
+
 // Serve local uploads statically
 app.use("/uploads", express.static(path.join(process.cwd(), "public", "uploads")));
 

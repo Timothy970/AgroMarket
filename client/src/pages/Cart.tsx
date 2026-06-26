@@ -113,77 +113,65 @@ export default function Cart() {
 
     setIsSubmittingOrder(true);
     try {
-      const itemsBySeller: Record<string, typeof items> = {};
-      for (const item of items) {
-        const sId = item.product.sellerId;
-        if (!itemsBySeller[sId]) {
-          itemsBySeller[sId] = [];
-        }
-        itemsBySeller[sId].push(item);
+      let subtotal = 0;
+      const mappedItems = items.map((item) => {
+        const price = Number(item.purchaseMode === 'bulk' && item.product.bulkPrice
+          ? item.product.bulkPrice
+          : item.product.smallPrice);
+        const itemSubtotal = price * item.quantity;
+        subtotal += itemSubtotal;
+
+        return {
+          productId: item.productId,
+          productName: item.product.name,
+          quantity: item.quantity,
+          purchaseMode: item.purchaseMode,
+          unitPrice: price.toString(),
+          unit: item.purchaseMode === 'bulk' ? item.product.bulkUnit || 'unit' : item.product.smallUnit,
+          subtotal: itemSubtotal.toString(),
+          sellerId: item.product.sellerId,
+        };
+      });
+
+      const uniqueSellerIds = Array.from(new Set(items.map(item => item.product.sellerId)));
+      const orderSellerId = uniqueSellerIds.length === 1 ? uniqueSellerIds[0] : null;
+
+      const deliveryFee = 500;
+      const estimatedTax = Math.round(subtotal * 0.16);
+      const totalAmount = subtotal + deliveryFee + estimatedTax;
+
+      const isBulkGroup = items.some(i => i.purchaseMode === 'bulk');
+      const depositAmount = isBulkGroup && payDeposit ? (totalAmount / 2) : null;
+      const remainingBalance = isBulkGroup && payDeposit ? (totalAmount / 2) : null;
+
+      const totalAmountToPay = depositAmount ? Number(depositAmount) : Number(totalAmount);
+
+      const response = await ordersApi.create({
+        sellerId: orderSellerId,
+        deliveryAddress,
+        subtotal: subtotal.toString(),
+        deliveryFee: deliveryFee.toString(),
+        totalAmount: totalAmount.toString(),
+        depositAmount: depositAmount ? depositAmount.toString() : null,
+        remainingBalance: remainingBalance ? remainingBalance.toString() : null,
+        status: 'placed',
+        depositPaid: false,
+        balancePaid: false,
+        items: mappedItems,
+      } as any);
+
+      if (response.status_code !== 200) {
+        throw new Error(response.message || "Failed to place order");
       }
 
-      const orderIds: string[] = [];
-      let totalAmountToPay = 0;
-
-      for (const [sellerId, sellerItems] of Object.entries(itemsBySeller)) {
-        let sellerSubtotal = 0;
-        const mappedItems = sellerItems.map((item) => {
-          const price = Number(item.purchaseMode === 'bulk' && item.product.bulkPrice
-            ? item.product.bulkPrice
-            : item.product.smallPrice);
-          const itemSubtotal = price * item.quantity;
-          sellerSubtotal += itemSubtotal;
-
-          return {
-            productId: item.productId,
-            productName: item.product.name,
-            quantity: item.quantity,
-            purchaseMode: item.purchaseMode,
-            unitPrice: price.toString(),
-            unit: item.purchaseMode === 'bulk' ? item.product.bulkUnit || 'unit' : item.product.smallUnit,
-            subtotal: itemSubtotal.toString(),
-          };
-        });
-
-        const deliveryFee = 500;
-        const estimatedTax = Math.round(sellerSubtotal * 0.16);
-        const totalAmount = sellerSubtotal + deliveryFee + estimatedTax;
-
-        const isBulkGroup = sellerItems.some(i => i.purchaseMode === 'bulk');
-        const depositAmount = isBulkGroup && payDeposit ? (totalAmount / 2) : null;
-        const remainingBalance = isBulkGroup && payDeposit ? (totalAmount / 2) : null;
-
-        totalAmountToPay += depositAmount ? Number(depositAmount) : Number(totalAmount);
-
-        const response = await ordersApi.create({
-          sellerId,
-          deliveryAddress,
-          subtotal: sellerSubtotal.toString(),
-          deliveryFee: deliveryFee.toString(),
-          totalAmount: totalAmount.toString(),
-          depositAmount: depositAmount ? depositAmount.toString() : null,
-          remainingBalance: remainingBalance ? remainingBalance.toString() : null,
-          status: 'placed',
-          depositPaid: false,
-          balancePaid: false,
-          items: mappedItems,
-        } as any);
-
-        if (response.status_code !== 200) {
-          throw new Error(response.message || "Failed to place order");
-        }
-
-        if (response.data?.id) {
-          orderIds.push(response.data.id);
-        }
-      }
+      const orderId = response.data?.id;
 
       await cartApi.clear(token);
       queryClient.invalidateQueries({ queryKey: ['cart'] });
 
       if (paymentMethod === "stripe") {
         const payRes = await axios.post("/api/payments/stripe/create-checkout-session", {
-          orderId: orderIds[0],
+          orderId,
           amount: totalAmountToPay,
           isDeposit: payDeposit,
         }, {
@@ -201,7 +189,7 @@ export default function Cart() {
         }
       } else {
         const payRes = await axios.post("/api/payments/mpesa/stkpush", {
-          orderId: orderIds[0],
+          orderId,
           phoneNumber: phoneNumber.trim(),
           amount: totalAmountToPay,
           type: mpesaType,
@@ -217,8 +205,8 @@ export default function Cart() {
 
       setCheckoutDialogOpen(false);
       
-      if (orderIds.length > 0) {
-        setLocation(`/orders/${orderIds[0]}`);
+      if (orderId) {
+        setLocation(`/orders/${orderId}`);
       } else {
         setLocation("/");
       }

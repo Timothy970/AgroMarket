@@ -1,7 +1,7 @@
 import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertProductSchema, updateProductSchema, insertCartItemSchema, insertOrderSchema, insertCategorySchema, insertOrderItemSchema } from "@shared/schema";
+import { insertProductSchema, updateProductSchema, insertCartItemSchema, insertOrderSchema, insertCategorySchema, insertOrderItemSchema, updateCategorySchema } from "@shared/schema";
 import { z } from "zod";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
@@ -83,9 +83,11 @@ async function handleMpesaCallbackLogic(orderId: string, payload: any) {
       const isDeposit = order.items.some(i => i.purchaseMode === 'bulk') && !order.depositPaid;
       if (isDeposit) {
         await storage.updateOrderPayment(orderId, { depositPaid: true, stripePaymentIntentId: receipt });
+        await storage.createSupplierPayouts(orderId);
       } else {
         await storage.updateOrderPayment(orderId, { balancePaid: true, stripePaymentIntentId: receipt });
         await storage.updateOrderStatus(orderId, "approved");
+        await storage.createSupplierPayouts(orderId);
       }
       console.log(`M-Pesa payment processed for Order ${orderId}, Receipt: ${receipt}`);
     }
@@ -266,6 +268,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch('/api/categories/:id', authenticateToken, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const user = await storage.getUser(userId);
+      if (user?.role !== "admin") {
+        return respondToClient(res, null, 403, "Admin role required to update categories")
+      }
+      const categoryId = req.params.id;
+      const categoryData = updateCategorySchema.parse(req.body);
+      const updatedCategory = await storage.updateCategory(categoryId, categoryData);
+      respondToClient(res, updatedCategory, 200, "Category updated successfully");
+    } catch (error: any) {
+      console.error("Error updating category:", error);
+      if (error instanceof z.ZodError) {
+        return respondToClient(res, error.errors, 400, "Validation error")
+      }
+      respondToClient(res, null, 500, "Failed to update category");
+    }
+  });
+
+  app.delete('/api/categories/:id', authenticateToken, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const user = await storage.getUser(userId);
+      if (user?.role !== "admin") {
+        return respondToClient(res, null, 403, "Admin role required to delete categories")
+      }
+      const categoryId = req.params.id;
+      await storage.deleteCategory(categoryId);
+      respondToClient(res, null, 200, "Category deleted successfully");
+    } catch (error: any) {
+      console.error("Error deleting category:", error);
+      respondToClient(res, null, 500, "Failed to delete category");
+    }
+  });
+
   //category products
   app.get('/api/categories/:id/products', async (req, res) => {
     try {
@@ -307,12 +345,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/products', async (req, res) => {
     try {
-      const { status, sellerId, category, search } = req.query;
+      const { status, sellerId, category, search, isFeatured } = req.query;
       const products = await storage.getProducts({
         status: status as any,
         sellerId: sellerId as string,
         category: category as string,
         search: search as string,
+        isFeatured: isFeatured !== undefined ? isFeatured === "true" : undefined,
       });
       respondToClient(res,products,200,"Products fetched successfully")
     } catch (error) {
@@ -424,6 +463,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch('/api/admin/products/:id/featured', authenticateToken, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const user = await storage.getUser(userId);
+      
+      if (user?.role !== "admin") {
+        return respondToClient(res, null, 403, "Admin access required");
+      }
+      
+      const { isFeatured } = req.body;
+      if (typeof isFeatured !== "boolean") {
+        return respondToClient(res, null, 400, "isFeatured boolean is required");
+      }
+      
+      const product = await storage.toggleProductFeatured(req.params.id, isFeatured);
+      respondToClient(res, product, 200, "Product featured status updated successfully");
+    } catch (error) {
+      console.error("Error toggling product featured status:", error);
+      respondToClient(res, null, 500, "Failed to toggle product featured status");
+    }
+  });
+
   // Admin users route
   app.get('/api/admin/users', authenticateToken, async (req: any, res) => {
     try {
@@ -437,6 +498,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching users:", error);
       respondToClient(res, null, 500, "Failed to fetch users");
+    }
+  });
+
+  // Admin Payout endpoints
+  app.get('/api/admin/payouts', authenticateToken, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.user.id);
+      if (user?.role !== "admin") {
+        return respondToClient(res, null, 403, "Admin access required");
+      }
+      const status = req.query.status as string;
+      const payouts = await storage.getSupplierPayouts({ status });
+      respondToClient(res, payouts, 200, "Supplier payouts fetched successfully");
+    } catch (error) {
+      console.error("Error fetching payouts:", error);
+      respondToClient(res, null, 500, "Failed to fetch payouts");
+    }
+  });
+
+  app.patch('/api/admin/payouts/:id/approve', authenticateToken, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.user.id);
+      if (user?.role !== "admin") {
+        return respondToClient(res, null, 403, "Admin access required");
+      }
+      const { payoutAmount } = req.body;
+      if (!payoutAmount) {
+        return respondToClient(res, null, 400, "payoutAmount is required");
+      }
+      await storage.approveSupplierPayout(req.params.id, payoutAmount.toString());
+      respondToClient(res, null, 200, "Supplier payout approved successfully");
+    } catch (error) {
+      console.error("Error approving payout:", error);
+      respondToClient(res, null, 500, "Failed to approve payout");
+    }
+  });
+
+  app.post('/api/admin/payouts/:id/pay', authenticateToken, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.user.id);
+      if (user?.role !== "admin") {
+        return respondToClient(res, null, 403, "Admin access required");
+      }
+      const payoutId = req.params.id;
+      console.log(`[B2C PAYOUT] Processing M-Pesa B2C payout for payout record ${payoutId}`);
+      await storage.paySupplierPayout(payoutId);
+      respondToClient(res, null, 200, "Supplier payout processed successfully via M-Pesa");
+    } catch (error) {
+      console.error("Error executing payout:", error);
+      respondToClient(res, null, 500, "Failed to process payout");
+    }
+  });
+
+  // Seller Payout tracking route
+  app.get('/api/seller/payouts', authenticateToken, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.user.id);
+      if (user?.role !== "seller") {
+        return respondToClient(res, null, 403, "Seller access required");
+      }
+      const status = req.query.status as string;
+      const payouts = await storage.getSupplierPayouts({ sellerId: user.id, status });
+      respondToClient(res, payouts, 200, "Seller payouts fetched successfully");
+    } catch (error) {
+      console.error("Error fetching seller payouts:", error);
+      respondToClient(res, null, 500, "Failed to fetch payouts");
     }
   });
 
@@ -546,9 +673,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const order = await storage.createOrder(orderData, parsedItems);
       
-      const seller = await storage.getUser(order.sellerId);
-      if (seller && seller.mobileNumber) {
-        await sendSMSNotification(seller.mobileNumber, `AgroMarket: You have a new order #${order.id.slice(0, 8)} waiting. Please open your seller dashboard to approve.`);
+      const uniqueSellerIds = Array.from(new Set(parsedItems.map(item => item.sellerId)));
+      for (const sellerId of uniqueSellerIds) {
+        const seller = await storage.getUser(sellerId);
+        if (seller && seller.mobileNumber) {
+          await sendSMSNotification(seller.mobileNumber, `AgroMarket: You have a new order #${order.id.slice(0, 8)} waiting. Please open your seller dashboard to approve.`);
+        }
       }
       
       respondToClient(res, order, 200, "Order created successfully");
@@ -664,12 +794,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return respondToClient(res,null,404,"Order not found")
       }
       
-      // Only buyer (for their own order), seller, or admin can update payment
-      if (order.buyerId !== userId && order.sellerId !== userId && user?.role !== "admin") {
+      // Only buyer (for their own order), seller of the order items, or admin can update payment
+      const isSeller = order.items.some(item => item.sellerId === userId);
+      if (order.buyerId !== userId && !isSeller && user?.role !== "admin") {
         return respondToClient(res,null,403,"Not authorized to update order payment")
       }
       
       const updated = await storage.updateOrderPayment(req.params.id, req.body);
+      if (req.body.depositPaid || req.body.balancePaid) {
+        await storage.createSupplierPayouts(req.params.id);
+      }
       respondToClient(res,updated,200,"Order payment updated successfully")
     } catch (error) {
       console.error("Error updating order payment:", error);
@@ -767,9 +901,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (orderId) {
         if (isDeposit) {
           await storage.updateOrderPayment(orderId, { depositPaid: true, stripePaymentIntentId: session.payment_intent as string });
+          await storage.createSupplierPayouts(orderId);
         } else {
           await storage.updateOrderPayment(orderId, { balancePaid: true, stripePaymentIntentId: session.payment_intent as string });
           await storage.updateOrderStatus(orderId, "approved");
+          await storage.createSupplierPayouts(orderId);
         }
         console.log(`Payment updated for Order ${orderId}`);
       }

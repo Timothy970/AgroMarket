@@ -83,6 +83,7 @@ export const products = pgTable("products", {
   location: varchar("location"),
   // Approval workflow
   status: productStatusEnum("status").notNull().default("pending"),
+  isFeatured: boolean("is_featured").default(false).notNull(),
   rejectionReason: text("rejection_reason"),
   approvedAt: timestamp("approved_at"),
   approvedBy: varchar("approved_by").references(() => users.id),
@@ -110,7 +111,7 @@ export const cartItems = pgTable("cart_items", {
 export const orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   buyerId: varchar("buyer_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  sellerId: varchar("seller_id").notNull().references(() => users.id),
+  sellerId: varchar("seller_id").references(() => users.id),
   subtotal: decimal("subtotal", { precision: 10, scale: 2 }).notNull(),
   deliveryFee: decimal("delivery_fee", { precision: 10, scale: 2 }).notNull().default("500"),
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
@@ -125,6 +126,10 @@ export const orders = pgTable("orders", {
   status: orderStatusEnum("status").notNull().default("placed"),
   // Payment
   stripePaymentIntentId: varchar("stripe_payment_intent_id"),
+  // Payouts
+  payoutStatus: varchar("payout_status", { length: 20 }).default("pending").notNull(),
+  payoutAmount: decimal("payout_amount", { precision: 10, scale: 2 }),
+  payoutPaidAt: timestamp("payout_paid_at"),
   // Timestamps
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -138,6 +143,7 @@ export const orderItems = pgTable("order_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
   productId: varchar("product_id").notNull().references(() => products.id),
+  sellerId: varchar("seller_id").notNull().references(() => users.id),
   productName: text("product_name").notNull(),
   quantity: integer("quantity").notNull(),
   purchaseMode: purchaseModeEnum("purchase_mode").notNull(),
@@ -170,6 +176,33 @@ export const messages = pgTable("messages", {
   index("messages_sender_idx").on(table.senderId),
   index("messages_receiver_idx").on(table.receiverId),
 ]);
+
+export const supplierPayouts = pgTable("supplier_payouts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  sellerId: varchar("seller_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+  payoutAmount: decimal("payout_amount", { precision: 10, scale: 2 }),
+  status: varchar("status", { length: 20 }).default("pending").notNull(),
+  paymentPhone: varchar("payment_phone").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("supplier_payouts_order_idx").on(table.orderId),
+  index("supplier_payouts_seller_idx").on(table.sellerId),
+  index("supplier_payouts_status_idx").on(table.status),
+]);
+
+export const supplierPayoutsRelations = relations(supplierPayouts, ({ one }) => ({
+  order: one(orders, {
+    fields: [supplierPayouts.orderId],
+    references: [orders.id],
+  }),
+  seller: one(users, {
+    fields: [supplierPayouts.sellerId],
+    references: [users.id],
+  }),
+}));
 
 // Relations
 export const categoriesRelations = relations(categories, ({ many }) => ({
@@ -323,3 +356,12 @@ export type InsertOrderItem = z.infer<typeof insertOrderItemSchema>;
 export type OrderItem = typeof orderItems.$inferSelect;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
 export type Message = typeof messages.$inferSelect;
+
+export const insertSupplierPayoutSchema = createInsertSchema(supplierPayouts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertSupplierPayout = z.infer<typeof insertSupplierPayoutSchema>;
+export type SupplierPayout = typeof supplierPayouts.$inferSelect;

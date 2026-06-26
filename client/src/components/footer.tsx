@@ -2,6 +2,7 @@ import React from 'react';
 import { Facebook, Twitter, Instagram, Linkedin } from 'lucide-react';
 
 const Footer = () => {
+    const currentYear = new Date().getFullYear();
     const footerSections = [
         {
             title: 'FOR BUYERS',
@@ -105,7 +106,7 @@ const Footer = () => {
                         {/* Copyright and Contact */}
                         <div className="text-center md:text-right">
                             <p className="text-xs">
-                                © 2025 AgroMarket. All rights reserved | Fresh. Local. Sustainable.
+                                © {currentYear} AgroMarket. All rights reserved | Fresh. Local. Sustainable.
                             </p>
                             <p className="text-xs mt-1">
                                 Customer Support: 1-800-AGRO-MKT | Email: support@agromarket.com

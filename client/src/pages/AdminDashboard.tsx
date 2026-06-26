@@ -25,6 +25,13 @@ import {
   Settings,
   LogOut,
   ShieldCheck,
+  Grid3x3,
+  Plus,
+  Edit,
+  Trash2,
+  Upload,
+  X,
+  Star,
 } from "lucide-react";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import {
@@ -44,7 +51,8 @@ import { useLocation } from "wouter";
 import { useAuthStore } from "@/store/authStore";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { productsApi, ordersApi } from "@/lib/api";
+import { productsApi, ordersApi, categoriesApi, payoutsApi } from "@/lib/api";
+import { Category } from "@shared/schema";
 import api from "@/lib/axios";
 
 export default function AdminDashboard() {
@@ -79,6 +87,238 @@ export default function AdminDashboard() {
     enabled: isAuthenticated && user?.role === 'admin',
   });
   const allUsers = usersResponse?.data || [];
+
+  const { data: approvedProductsResponse, isLoading: approvedProductsLoading } = useQuery({
+    queryKey: ['admin-approved-products'],
+    queryFn: () => productsApi.getAll({ status: 'approved' }),
+    enabled: isAuthenticated && user?.role === 'admin',
+  });
+  const approvedProducts = approvedProductsResponse?.data || [];
+
+  const { data: payoutsResponse, isLoading: payoutsLoading } = useQuery({
+    queryKey: ['admin-all-payouts'],
+    queryFn: () => payoutsApi.getAdminPayouts(),
+    enabled: isAuthenticated && user?.role === 'admin',
+  });
+  const allPayouts = payoutsResponse?.data || [];
+
+  const [approvePayoutDialogOpen, setApprovePayoutDialogOpen] = useState(false);
+  const [selectedPayout, setSelectedPayout] = useState<any | null>(null);
+  const [customPayoutAmount, setCustomPayoutAmount] = useState("");
+
+  const approvePayoutMutation = useMutation({
+    mutationFn: async ({ id, amount }: { id: string; amount: number }) => {
+      return payoutsApi.approvePayout(id, amount);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-all-payouts'] });
+      toast({
+        title: "Payout Approved",
+        description: "The custom payout amount has been approved.",
+      });
+      setApprovePayoutDialogOpen(false);
+      setSelectedPayout(null);
+      setCustomPayoutAmount("");
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to approve payout.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  const payPayoutMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return payoutsApi.paySupplier(id);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-all-payouts'] });
+      toast({
+        title: "Payout Completed",
+        description: "The payment has been sent to the supplier successfully.",
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Payment Error",
+        description: err.message || "Failed to process B2C payout.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  const toggleFeaturedMutation = useMutation({
+    mutationFn: async ({ id, isFeatured }: { id: string; isFeatured: boolean }) => {
+      return productsApi.toggleFeatured(id, isFeatured);
+    },
+    onSuccess: (data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-approved-products'] });
+      toast({
+        title: variables.isFeatured ? "Featured" : "Unfeatured",
+        description: `Product successfully ${variables.isFeatured ? "featured" : "removed from featured"}.`,
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to update featured status.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Categories management states
+  const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false);
+  const [categoryName, setCategoryName] = useState("");
+  const [categoryDescription, setCategoryDescription] = useState("");
+  const [categoryImageUrl, setCategoryImageUrl] = useState("");
+  const [imageUrlInput, setImageUrlInput] = useState("");
+  const [categoryImageUploading, setCategoryImageUploading] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [deleteCategoryDialogOpen, setDeleteCategoryDialogOpen] = useState(false);
+  const [selectedCategoryToDelete, setSelectedCategoryToDelete] = useState<Category | null>(null);
+
+  const { data: categoriesResponse, isLoading: categoriesLoading } = useQuery({
+    queryKey: ['admin-all-categories'],
+    queryFn: () => categoriesApi.getAll(),
+    enabled: isAuthenticated && user?.role === 'admin',
+  });
+  const allCategories = categoriesResponse?.data || [];
+
+  const handleCategoryImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    
+    setCategoryImageUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("image", files[0]);
+
+      const response = await api.post("/api/upload", formData, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      });
+
+      if (response.data.status_code === 200) {
+        setCategoryImageUrl(response.data.data.url);
+        toast({
+          title: "Success",
+          description: "Image uploaded successfully",
+        });
+      } else {
+        toast({
+          title: "Upload Failed",
+          description: response.data.message || "Failed to upload image",
+          variant: "destructive"
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Upload Error",
+        description: err.message || "Failed to upload image",
+        variant: "destructive"
+      });
+    } finally {
+      setCategoryImageUploading(false);
+    }
+  };
+
+  const createCategoryMutation = useMutation({
+    mutationFn: async (data: { name: string; description: string; imageUrl?: string }) => {
+      return categoriesApi.create(data as any);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-all-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['categories'] });
+      toast({
+        title: "Category Created",
+        description: "New category created successfully.",
+      });
+      closeCategoryDialog();
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to create category.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  const updateCategoryMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: { name: string; description: string; imageUrl?: string } }) => {
+      return categoriesApi.update(id, data as any);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-all-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['categories'] });
+      toast({
+        title: "Category Updated",
+        description: "Category updated successfully.",
+      });
+      closeCategoryDialog();
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to update category.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  const deleteCategoryMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return categoriesApi.delete(id);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-all-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['categories'] });
+      toast({
+        title: "Category Deleted",
+        description: "Category deleted successfully.",
+      });
+      setDeleteCategoryDialogOpen(false);
+      setSelectedCategoryToDelete(null);
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to delete category.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  const openCreateCategoryDialog = () => {
+    setEditingCategory(null);
+    setCategoryName("");
+    setCategoryDescription("");
+    setCategoryImageUrl("");
+    setImageUrlInput("");
+    setIsCategoryDialogOpen(true);
+  };
+
+  const openEditCategoryDialog = (category: any) => {
+    setEditingCategory(category);
+    setCategoryName(category.name);
+    setCategoryDescription(category.description || "");
+    setCategoryImageUrl(category.imageUrl || "");
+    setImageUrlInput(category.imageUrl || "");
+    setIsCategoryDialogOpen(true);
+  };
+
+  const closeCategoryDialog = () => {
+    setIsCategoryDialogOpen(false);
+    setEditingCategory(null);
+    setCategoryName("");
+    setCategoryDescription("");
+    setCategoryImageUrl("");
+    setImageUrlInput("");
+  };
 
   const approveMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -191,11 +431,38 @@ export default function AdminDashboard() {
               </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton
+                  isActive={activeView === "products"}
+                  onClick={() => setActiveView("products")}
+                >
+                  <ShoppingBag />
+                  <span>Products</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
                   isActive={activeView === "users"}
                   onClick={() => setActiveView("users")}
                 >
                   <Users />
                   <span>Users</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeView === "categories"}
+                  onClick={() => setActiveView("categories")}
+                >
+                  <Grid3x3 />
+                  <span>Categories</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={activeView === "payouts"}
+                  onClick={() => setActiveView("payouts")}
+                >
+                  <DollarSign />
+                  <span>Payouts</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
@@ -206,7 +473,7 @@ export default function AdminDashboard() {
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton>
+                <SidebarMenuButton onClick={() => setLocation("/settings")}>
                   <Settings />
                   <span>Settings</span>
                 </SidebarMenuButton>
@@ -447,6 +714,268 @@ export default function AdminDashboard() {
             )}
           </>
         )}
+
+        {activeView === "categories" && (
+          <>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">Categories</h1>
+                <p className="text-sm text-muted-foreground">Manage crop and product categories</p>
+              </div>
+              <Button onClick={openCreateCategoryDialog}>
+                <Plus className="w-4 h-4 mr-2" />
+                Add Category
+              </Button>
+            </div>
+
+            {categoriesLoading ? (
+              <p className="text-muted-foreground">Loading categories...</p>
+            ) : allCategories && allCategories.length > 0 ? (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {allCategories.map((category: any) => (
+                  <Card key={category.id} className="p-6 flex flex-col justify-between">
+                    <div>
+                      {category.imageUrl && (
+                        <div className="aspect-[16/9] w-full rounded-lg overflow-hidden bg-muted mb-4">
+                          <img
+                            src={category.imageUrl}
+                            alt={category.name}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      )}
+                      <h3 className="font-semibold text-lg mb-1">{category.name}</h3>
+                      <p className="text-sm text-muted-foreground line-clamp-2 mb-4">
+                        {category.description || "No description provided."}
+                      </p>
+                    </div>
+                    <div className="flex gap-2 justify-end border-t pt-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openEditCategoryDialog(category)}
+                      >
+                        <Edit className="w-4 h-4 mr-1.5" />
+                        Edit
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedCategoryToDelete(category);
+                          setDeleteCategoryDialogOpen(true);
+                        }}
+                      >
+                        <Trash2 className="w-4 h-4 mr-1.5" />
+                        Delete
+                      </Button>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-64 border rounded-lg border-dashed">
+                <div className="text-center">
+                  <Grid3x3 className="mx-auto h-10 w-10 text-muted-foreground" />
+                  <h3 className="mt-4 text-lg font-semibold">No categories found</h3>
+                  <p className="text-sm text-muted-foreground mt-1">Get started by creating your first category</p>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {activeView === "products" && (
+          <>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">Products Manager</h1>
+                <p className="text-sm text-muted-foreground">Manage approved products and promote them to featured</p>
+              </div>
+            </div>
+
+            {approvedProductsLoading ? (
+              <p className="text-muted-foreground">Loading approved products...</p>
+            ) : approvedProducts && approvedProducts.length > 0 ? (
+              <div className="border rounded-lg overflow-hidden bg-card">
+                <div className="relative w-full overflow-auto">
+                  <table className="w-full caption-bottom text-sm">
+                    <thead>
+                      <tr className="border-b transition-colors hover:bg-muted/50">
+                        <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-[80px]">Image</th>
+                        <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Name</th>
+                        <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Category</th>
+                        <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Price</th>
+                        <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Stock</th>
+                        <th className="h-12 px-4 text-center align-middle font-medium text-muted-foreground w-[100px]">Featured</th>
+                      </tr>
+                    </thead>
+                    <tbody className="[&_tr:last-child]:border-0">
+                      {approvedProducts.map((product) => {
+                        const isProductFeatured = product.isFeatured || false;
+                        const categoryName = allCategories.find((c: any) => c.id === product.categoryId)?.name || "Unknown";
+                        return (
+                          <tr key={product.id} className="border-b transition-colors hover:bg-muted/50">
+                            <td className="p-4 align-middle">
+                              {product.images && product.images[0] ? (
+                                <img
+                                  src={product.images[0]}
+                                  alt={product.name}
+                                  className="w-12 h-12 rounded object-cover"
+                                />
+                              ) : (
+                                <div className="w-12 h-12 rounded bg-muted flex items-center justify-center text-xs text-muted-foreground">
+                                  No image
+                                </div>
+                              )}
+                            </td>
+                            <td className="p-4 align-middle font-medium">{product.name}</td>
+                            <td className="p-4 align-middle">{categoryName}</td>
+                            <td className="p-4 align-middle">
+                              KES {Number(product.smallPrice)}/{product.smallUnit}
+                            </td>
+                            <td className="p-4 align-middle">{product.availableQuantity}</td>
+                            <td className="p-4 align-middle text-center">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={`h-9 w-9 rounded-full ${
+                                  isProductFeatured 
+                                    ? "text-yellow-500 hover:text-yellow-600 hover:bg-yellow-500/10" 
+                                    : "text-muted-foreground hover:text-yellow-500 hover:bg-yellow-500/5"
+                                }`}
+                                onClick={() => {
+                                  toggleFeaturedMutation.mutate({
+                                    id: product.id,
+                                    isFeatured: !isProductFeatured,
+                                  });
+                                }}
+                                disabled={toggleFeaturedMutation.isPending && toggleFeaturedMutation.variables?.id === product.id}
+                              >
+                                <Star className="h-5 w-5" fill={isProductFeatured ? "currentColor" : "none"} />
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-64 border rounded-lg border-dashed">
+                <div className="text-center">
+                  <ShoppingBag className="mx-auto h-10 w-10 text-muted-foreground" />
+                  <h3 className="mt-4 text-lg font-semibold">No approved products</h3>
+                  <p className="text-sm text-muted-foreground mt-1">Approved products will appear here for featuring control.</p>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {activeView === "payouts" && (
+          <>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">Supplier Payouts</h1>
+                <p className="text-sm text-muted-foreground">Manage and distribute payouts to agricultural suppliers</p>
+              </div>
+            </div>
+
+            {payoutsLoading ? (
+              <p className="text-muted-foreground">Loading supplier payouts...</p>
+            ) : allPayouts && allPayouts.length > 0 ? (
+              <div className="border rounded-lg overflow-hidden bg-card shadow-sm">
+                <div className="relative w-full overflow-auto">
+                  <table className="w-full caption-bottom text-sm">
+                    <thead>
+                      <tr className="border-b transition-colors bg-muted/20">
+                        <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Supplier</th>
+                        <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Payment Phone</th>
+                        <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">Sales Total</th>
+                        <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">Payout Amount</th>
+                        <th className="h-12 px-4 text-center align-middle font-medium text-muted-foreground">Status</th>
+                        <th className="h-12 px-4 text-center align-middle font-medium text-muted-foreground w-[180px]">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="[&_tr:last-child]:border-0">
+                      {allPayouts.map((payout: any) => {
+                        let statusColor = "bg-yellow-500/10 text-yellow-500 border-yellow-500/20";
+                        if (payout.status === 'approved') {
+                          statusColor = "bg-blue-500/10 text-blue-500 border-blue-500/20";
+                        } else if (payout.status === 'paid') {
+                          statusColor = "bg-green-500/10 text-green-500 border-green-500/20";
+                        }
+
+                        return (
+                          <tr key={payout.id} className="border-b transition-colors hover:bg-muted/50">
+                            <td className="p-4 align-middle">
+                              <div className="font-medium">{payout.sellerName}</div>
+                              <div className="text-xs text-muted-foreground">{payout.sellerEmail}</div>
+                            </td>
+                            <td className="p-4 align-middle">{payout.paymentPhone}</td>
+                            <td className="p-4 align-middle text-right font-semibold">
+                              KES {Number(payout.totalAmount).toLocaleString()}
+                            </td>
+                            <td className="p-4 align-middle text-right font-bold text-primary">
+                              {payout.payoutAmount ? `KES ${Number(payout.payoutAmount).toLocaleString()}` : "Not set"}
+                            </td>
+                            <td className="p-4 align-middle text-center">
+                              <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${statusColor}`}>
+                                {payout.status.toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="p-4 align-middle text-center">
+                              <div className="flex justify-center gap-2">
+                                {payout.status === 'pending' && (
+                                  <Button
+                                    size="sm"
+                                    onClick={() => {
+                                      setSelectedPayout(payout);
+                                      setCustomPayoutAmount(payout.totalAmount);
+                                      setApprovePayoutDialogOpen(true);
+                                    }}
+                                  >
+                                    Approve Amount
+                                  </Button>
+                                )}
+                                {payout.status === 'approved' && (
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    className="bg-green-600 text-white hover:bg-green-700 font-semibold"
+                                    onClick={() => payPayoutMutation.mutate(payout.id)}
+                                    disabled={payPayoutMutation.isPending && payPayoutMutation.variables === payout.id}
+                                  >
+                                    {payPayoutMutation.isPending && payPayoutMutation.variables === payout.id ? "Processing..." : "Pay via Phone"}
+                                  </Button>
+                                )}
+                                {payout.status === 'paid' && (
+                                  <span className="text-xs text-muted-foreground flex items-center justify-center gap-1 font-medium">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block animate-pulse" /> Paid
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-64 border rounded-lg border-dashed">
+                <div className="text-center">
+                  <DollarSign className="mx-auto h-10 w-10 text-muted-foreground" />
+                  <h3 className="mt-4 text-lg font-semibold">No payouts found</h3>
+                  <p className="text-sm text-muted-foreground mt-1">Sellers' orders payouts will appear here.</p>
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
@@ -488,6 +1017,227 @@ export default function AdminDashboard() {
               disabled={!rejectionReason.trim() || rejectMutation.isPending}
             >
               {rejectMutation.isPending ? "Confirming..." : "Confirm Rejection"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Payout Approval Dialog */}
+      <Dialog open={approvePayoutDialogOpen} onOpenChange={setApprovePayoutDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Approve Supplier Payout</DialogTitle>
+            <DialogDescription>
+              Adjust and approve the payout amount. You can retain a commission from the total sales.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-1">
+              <Label>Original Sales Subtotal</Label>
+              <div className="font-semibold text-lg">
+                KES {selectedPayout ? Number(selectedPayout.totalAmount).toLocaleString() : "0"}
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="payout-amount">Approved Payout Amount (KES) <span className="text-destructive">*</span></Label>
+              <Input
+                id="payout-amount"
+                type="number"
+                placeholder="Enter amount to pay seller"
+                value={customPayoutAmount}
+                onChange={(e) => setCustomPayoutAmount(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                By default, this is equal to the supplier's items subtotal. You can enter a lower amount to deduct processing fees or commissions.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setApprovePayoutDialogOpen(false);
+                setSelectedPayout(null);
+                setCustomPayoutAmount("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (selectedPayout && customPayoutAmount) {
+                  approvePayoutMutation.mutate({
+                    id: selectedPayout.id,
+                    amount: Number(customPayoutAmount),
+                  });
+                }
+              }}
+              disabled={!customPayoutAmount || approvePayoutMutation.isPending}
+            >
+              {approvePayoutMutation.isPending ? "Approving..." : "Confirm & Approve"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Category Create/Edit Dialog */}
+      <Dialog open={isCategoryDialogOpen} onOpenChange={setIsCategoryDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editingCategory ? "Edit Category" : "Add New Category"}</DialogTitle>
+            <DialogDescription>
+              Provide category details. You can either upload an image file or paste a direct image URL.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label htmlFor="category-name">
+                Category Name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="category-name"
+                placeholder="e.g., Grains"
+                className="mt-1.5"
+                value={categoryName}
+                onChange={(e) => setCategoryName(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="category-desc">Description</Label>
+              <Textarea
+                id="category-desc"
+                placeholder="Describe this category"
+                className="mt-1.5 min-h-20"
+                value={categoryDescription}
+                onChange={(e) => setCategoryDescription(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Category Image</Label>
+              {categoryImageUrl && (
+                <div className="relative aspect-[16/9] border rounded-lg overflow-hidden bg-muted group mb-3">
+                  <img
+                    src={categoryImageUrl}
+                    alt="Category preview"
+                    className="w-full h-full object-cover"
+                  />
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    className="absolute top-2 right-2 h-7 w-7 rounded-full opacity-90 hover:opacity-100"
+                    onClick={() => {
+                      setCategoryImageUrl("");
+                      setImageUrlInput("");
+                    }}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+              
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Paste image URL (e.g., https://...)"
+                    value={imageUrlInput}
+                    onChange={(e) => setImageUrlInput(e.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setCategoryImageUrl(imageUrlInput)}
+                    disabled={!imageUrlInput.trim()}
+                  >
+                    Use URL
+                  </Button>
+                </div>
+                <div className="relative flex items-center justify-center py-1">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <span className="relative bg-background px-2 text-xs text-muted-foreground">OR</span>
+                </div>
+                <div>
+                  <Label
+                    htmlFor="category-image-file"
+                    className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:bg-muted/30 cursor-pointer flex flex-col items-center justify-center"
+                  >
+                    <Upload className="w-8 h-8 text-muted-foreground mb-2" />
+                    <span className="font-medium text-sm">
+                      {categoryImageUploading ? "Uploading..." : "Click to upload image file"}
+                    </span>
+                    <input
+                      id="category-image-file"
+                      type="file"
+                      className="hidden"
+                      accept="image/*"
+                      onChange={handleCategoryImageUpload}
+                      disabled={categoryImageUploading}
+                    />
+                  </Label>
+                </div>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeCategoryDialog}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                const data = {
+                  name: categoryName,
+                  description: categoryDescription,
+                  imageUrl: categoryImageUrl || undefined
+                };
+                if (editingCategory) {
+                  updateCategoryMutation.mutate({ id: editingCategory.id, data });
+                } else {
+                  createCategoryMutation.mutate(data);
+                }
+              }}
+              disabled={
+                !categoryName.trim() ||
+                createCategoryMutation.isPending ||
+                updateCategoryMutation.isPending
+              }
+            >
+              {createCategoryMutation.isPending || updateCategoryMutation.isPending
+                ? "Saving..."
+                : "Save Category"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Category Confirmation Dialog */}
+      <Dialog open={deleteCategoryDialogOpen} onOpenChange={setDeleteCategoryDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-destructive flex items-center gap-2">
+              Delete Category: {selectedCategoryToDelete?.name}
+            </DialogTitle>
+            <DialogDescription className="space-y-2 pt-2">
+              <p>Are you sure you want to delete this category?</p>
+              <p className="text-xs font-semibold text-destructive uppercase tracking-wider bg-destructive/10 p-2.5 rounded border border-destructive/20">
+                WARNING: Deleting this category will delete all products associated with it. This action cannot be undone.
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteCategoryDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (selectedCategoryToDelete) {
+                  deleteCategoryMutation.mutate(selectedCategoryToDelete.id);
+                }
+              }}
+              disabled={deleteCategoryMutation.isPending}
+            >
+              {deleteCategoryMutation.isPending ? "Deleting..." : "Confirm Delete"}
             </Button>
           </DialogFooter>
         </DialogContent>

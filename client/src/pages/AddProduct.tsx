@@ -37,6 +37,7 @@ export default function AddProduct() {
   // Image Upload states
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [imageUrlInput, setImageUrlInput] = useState("");
 
   // Payout states
   const [payoutMethod, setPayoutMethod] = useState<PayoutMethod>("mobile_money");
@@ -321,7 +322,6 @@ export default function AddProduct() {
 
           <div className="space-y-4">
             <h2 className="font-semibold text-lg">Product Images</h2>
-            
             <div 
               className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:bg-muted/30 cursor-pointer"
               onClick={() => fileInputRef.current?.click()}
@@ -340,6 +340,29 @@ export default function AddProduct() {
                 accept="image/*" 
                 onChange={handleFileChange}
               />
+            </div>
+
+            <div className="flex gap-2">
+              <Input
+                placeholder="Or paste image URL (e.g., https://...)"
+                value={imageUrlInput}
+                onChange={(e) => setImageUrlInput(e.target.value)}
+              />
+              <Button 
+                type="button" 
+                variant="secondary"
+                disabled={!imageUrlInput.trim()}
+                onClick={() => {
+                  setUploadedImages((prev) => [...prev, imageUrlInput.trim()]);
+                  setImageUrlInput("");
+                  toast({
+                    title: "Success",
+                    description: "Image URL added successfully",
+                  });
+                }}
+              >
+                Add URL
+              </Button>
             </div>
 
             {uploadedImages.length > 0 && (
